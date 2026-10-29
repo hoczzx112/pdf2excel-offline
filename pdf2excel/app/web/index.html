@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF → Excel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">
+      <span class="logo">XL</span>
+      <div>
+        <h1>PDF → Excel</h1>
+        <p class="sub">Chuyển bảng trong PDF thành Excel · xử lý tại máy, không gửi file lên mạng</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-run-all" class="btn" hidden>Chuyển đổi tất cả</button>
+      <button id="btn-zip" class="btn ghost" hidden>Tải tất cả (.zip)</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="drop" class="drop">
+    <input type="file" id="file" accept="application/pdf,.pdf" multiple hidden>
+    <div class="drop-inner">
+      <div class="drop-icon">⇪</div>
+      <p class="drop-title">Kéo file PDF vào đây, hoặc <button class="link" id="btn-browse">chọn file</button></p>
+      <p class="drop-hint">Hỗ trợ PDF có text và PDF scan (OCR tiếng Trung / Anh / số). Tối đa 20 file, 100 MB/file.
+        File được <strong>xử lý tự động</strong> ngay sau khi tải lên.</p>
+    </div>
+  </section>
+
+  <section id="jobs" class="jobs"></section>
+
+  <section id="empty" class="hint">
+    <h2>Kết quả sẽ trông thế nào?</h2>
+    <ul>
+      <li>Mỗi bảng trong PDF → một sheet riêng, giữ nguyên ô gộp và độ rộng cột.</li>
+      <li>Bạn xem trước và sửa trực tiếp trên web trước khi tải về.</li>
+      <li>Ô do OCR đọc với độ tin cậy thấp được tô vàng để bạn kiểm tra.</li>
+      <li>Chữ dài trong ô tự xuống dòng theo độ rộng cột, không bị ép ngắt dòng.</li>
+    </ul>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

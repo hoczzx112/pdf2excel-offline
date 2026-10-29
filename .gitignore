@@ -1,0 +1,32 @@
+# --- Dữ liệu chạy của app (job upload, log) ---
+pdf2excel/data/jobs/
+pdf2excel/data/logs/
+pdf2excel/data/*.db
+
+# --- Kết quả và tài liệu thử, không phải mã nguồn ---
+check_PDF/
+doccheck/
+*.pdf
+*.xlsx
+*.xlsm
+*.png
+*.jpg
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Hệ điều hành / editor ---
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.swp
