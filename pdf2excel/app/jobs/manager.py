@@ -48,6 +48,7 @@ class Job:
     t_start: float = 0.0
     page_no: int = 0
     pages_total: int = 0
+    first_page: int = 1
     pages_done: int = 0
     page_started: float = 0.0
     page_durations: list[float] = field(default_factory=list)
@@ -126,7 +127,8 @@ class JobManager:
 
     # ---------- chuyển đổi ----------
     def start(self, job: Job, *, mode: str = "auto", engine: str = "fast",
-              page_modes: dict[int, str] | None = None) -> dict:
+              page_modes: dict[int, str] | None = None,
+              skip_first_page: bool = False) -> dict:
         if job.status == "converting":
             return {"ok": False, "error": "File này đang được xử lý."}
 
@@ -147,11 +149,13 @@ class JobManager:
         job.t_start = time.time()
         job.page_no = 0
         job.pages_total = 0
+        job.first_page = 1
         job.pages_done = 0
         job.page_started = time.time()
         job.page_durations = []
         job.stage_message = "Đang chuẩn bị…"
         job.options = {"mode": mode, "engine": engine,
+                       "skip_first_page": bool(skip_first_page),
                        "page_modes": {str(k): v for k, v in (page_modes or {}).items()}}
         self.emit(job, stage="start", pct=0, message="Bắt đầu xử lý…")
 
@@ -159,9 +163,10 @@ class JobManager:
             target=self._heartbeat, args=(job,), daemon=True, name=f"hb-{job.id}"
         )
         job.heartbeat.start()
-        _executor.submit(self._run, job, mode, engine, page_modes or {})
-        log.info("job %s start: %s mode=%s engine=%s pages=%s",
-                 job.id, job.filename, mode, engine,
+        _executor.submit(self._run, job, mode, engine, page_modes or {},
+                         bool(skip_first_page))
+        log.info("job %s start: %s mode=%s engine=%s skip_first=%s pages=%s",
+                 job.id, job.filename, mode, engine, bool(skip_first_page),
                  (job.analysis or {}).get("num_pages"))
         return {"ok": True}
 
@@ -179,6 +184,7 @@ class JobManager:
         if stage == "page":
             job.page_no = int(ev.get("page") or 0)
             job.pages_total = int(ev.get("pages") or 0)
+            job.first_page = int(ev.get("first_page") or 1)
             job.page_started = time.time()
             msg = str(ev.get("message") or "")
             if ": " in msg:                       # bỏ tiền tố "Trang 1/3: "
@@ -211,17 +217,20 @@ class JobManager:
 
             elapsed = time.time() - job.t_start
             pages = job.pages_total
-            done = job.pages_done
+            first = max(1, min(job.first_page, pages or 1))
+            span = max(1, pages - first + 1) if pages else 1
+            done = job.pages_done - first + 1 if pages else 0
+            done = max(0, min(span, done))
             if pages:
-                base = 5 + 90 * (done / pages)
-                cap = 5 + 90 * (min(pages, done + 1) / pages)
+                base = 5 + 90 * (done / span)
+                cap = 5 + 90 * (min(span, done + 1) / span)
                 frac = min(0.9, elapsed / max(15.0, 5.0 * (done + 1)))
                 pct = base + (cap - base) * frac
-                msg = f"Trang {min(pages, done + 1)}/{pages}: {job.stage_message} · {elapsed:.0f}s"
+                msg = f"Trang {min(pages, max(first, job.page_no))}/{pages}: {job.stage_message} · {elapsed:.0f}s"
                 durs = job.page_durations[-4:]
-                if durs and pages > done:
+                if durs and span > done:
                     avg = sum(durs) / len(durs)
-                    eta = avg * (pages - done) - (time.time() - job.page_started)
+                    eta = avg * (span - done) - (time.time() - job.page_started)
                     if eta > 1:
                         msg += f" (còn ~{_fmt_eta(eta)})"
             else:
@@ -232,7 +241,7 @@ class JobManager:
                       page=job.page_no, pages=pages, elapsed=round(elapsed, 1))
 
     def _run(self, job: Job, mode: str, engine: str,
-             page_modes: dict[int, str]) -> None:
+             page_modes: dict[int, str], skip_first_page: bool = False) -> None:
         t0 = time.time()
         try:
             result = convert(
@@ -243,6 +252,7 @@ class JobManager:
                 on_event=lambda **ev: self._on_event(job, **ev),
                 workdir=job.workdir,
                 should_stop=lambda: job.cancel_requested,
+                skip_first_page=skip_first_page,
             )
             job.result = result
             job.finished = time.time()

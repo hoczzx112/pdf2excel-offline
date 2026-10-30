@@ -67,18 +67,22 @@ def convert(
     workdir: Path | None = None,
     max_pages: int | None = None,
     should_stop: Callable[[], bool] | None = None,
+    skip_first_page: bool = False,
 ) -> DocResult:
     """Chuyển một file PDF thành DocResult.
 
     mode: auto | text (buộc đọc text layer) | ocr (buộc OCR)
     engine: fast (mặc định) | deep (docling, chậm nhưng xử lý layout lạ tốt hơn)
     should_stop: hàm trả về True để dừng giữa các trang (nút "Dừng").
+    skip_first_page: bỏ hẳn trang 1 (trang bìa / bản vẽ AutoCAD) — không render,
+        không OCR, nên cũng tránh được các trang bản vẽ rất chậm.
     """
     if engine == "deep":
         from .docling_engine import convert_deep
 
         return convert_deep(
-            path, on_event=on_event, workdir=workdir, max_pages=max_pages
+            path, on_event=on_event, workdir=workdir, max_pages=max_pages,
+            skip_first_page=skip_first_page,
         )
 
     cb = on_event or _noop
@@ -96,7 +100,21 @@ def convert(
                 f"File có {len(pdf)} trang, chỉ xử lý {total} trang đầu (giới hạn cấu hình)."
             )
 
-        for i in range(total):
+        first = 0
+        if skip_first_page:
+            if total > 1:
+                first = 1
+                result.warnings.append(
+                    "Đã bỏ qua trang 1 theo tuỳ chọn — xử lý từ trang 2."
+                )
+            else:
+                result.warnings.append(
+                    "File chỉ có 1 trang nên vẫn xử lý trang đó (tuỳ chọn bỏ qua trang 1 "
+                    "chỉ áp dụng cho file từ 2 trang trở lên)."
+                )
+        span = max(1, total - first)
+
+        for i in range(first, total):
             if stop():
                 raise Cancelled()
 
@@ -122,7 +140,8 @@ def convert(
                 stage="page",
                 page=page_no,
                 pages=total,
-                pct=5 + 90 * (i / max(1, total)),
+                first_page=first + 1,
+                pct=5 + 90 * ((i - first) / span),
                 message=f"Trang {page_no}/{total}: {'đọc text layer' if kind == 'text' else 'OCR ảnh'}…",
             )
 
@@ -188,7 +207,8 @@ def convert(
                 stage="page_done",
                 page=page_no,
                 pages=total,
-                pct=5 + 90 * ((i + 1) / max(1, total)),
+                first_page=first + 1,
+                pct=5 + 90 * ((i - first + 1) / span),
                 message=f"Trang {page_no}: {len(tables)} bảng",
             )
     finally:

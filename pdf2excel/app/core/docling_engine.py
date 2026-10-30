@@ -77,6 +77,7 @@ def convert_deep(
     on_event=None,
     workdir: Path | None = None,
     max_pages: int | None = None,
+    skip_first_page: bool = False,
 ) -> DocResult:
     from docling_core.types.doc.document import TableItem as DocTableItem
     from docling_core.types.doc.document import TextItem as DocTextItem
@@ -119,7 +120,10 @@ def convert_deep(
                 texts.setdefault(page_no, []).append(txt)
 
     total = max(list(tables_by_page) + list(texts) + [1])
-    for page_no in range(1, total + 1):
+    first = 1 if (skip_first_page and total > 1) else 0
+    if first:
+        result.warnings.append("Đã bỏ qua trang 1 theo tuỳ chọn — xử lý từ trang 2.")
+    for page_no in range(first + 1, total + 1):
         result.pages.append(
             PageResult(
                 page=page_no,

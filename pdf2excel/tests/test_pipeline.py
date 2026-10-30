@@ -381,6 +381,80 @@ def test_rejects_non_pdf() -> None:
     assert "PDF" in resp.json()["detail"]
 
 
+def test_rotate_90_maps_text_to_right_cells() -> None:
+    """Trang /Rotate 90: hộp bao ký tự phải xoay theo trang, không lệch hệ trục.
+
+    Lỗi thật (file JYCP): bỏ qua /Rotate khiến toạ độ chữ rơi ra ngoài ô, cả
+    bảng thành rác.
+    """
+    tmp = _tmpdir()
+    flat = convert(build_table_pdf(tmp / "flat.pdf"))
+    turned = convert(build_table_pdf(tmp / "rot90.pdf", rotate=90))
+
+    assert len(turned.tables) == 1, [t.id for t in turned.tables]
+    assert len(flat.tables) == 1
+    assert turned.tables[0].grid() == flat.tables[0].grid()
+    # và mỗi ô phải là 1 dòng, không bị cắt thành từng ký tự
+    assert turned.tables[0].grid()[1][1] == "Bolt M6"
+
+
+def test_skip_first_page() -> None:
+    """Tuỳ chọn bỏ qua trang 1: không xử lý trang bìa / bản vẽ."""
+    tmp = _tmpdir()
+    pdf = build_table_pdf(tmp / "two.pdf", page_count=2)
+
+    full = convert(pdf)
+    assert [p.page for p in full.pages] == [1, 2], [p.page for p in full.pages]
+
+    skipped = convert(pdf, skip_first_page=True)
+    assert [p.page for p in skipped.pages] == [2], [p.page for p in skipped.pages]
+    assert len(skipped.tables) == 1
+    assert any("bỏ qua trang 1" in w.lower() for w in skipped.warnings), skipped.warnings
+
+    # file 1 trang: vẫn xử lý, chỉ cảnh báo (tránh ra file Excel rỗng khó hiểu)
+    one = convert(build_table_pdf(tmp / "one.pdf"), skip_first_page=True)
+    assert [p.page for p in one.pages] == [1]
+    assert any("1 trang" in w for w in one.warnings), one.warnings
+
+
+def test_http_skip_first_page() -> None:
+    """API: cờ skip_first_page đi từ request -> manager -> kết quả."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    tmp = _tmpdir()
+    pdf = build_table_pdf(tmp / "api2.pdf", page_count=2)
+    client = TestClient(app)
+
+    with open(pdf, "rb") as fh:
+        resp = client.post(
+            "/api/jobs", files={"files": ("api2.pdf", fh, "application/pdf")}
+        )
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobs"][0]["id"]
+
+    try:
+        started = client.post(
+            f"/api/jobs/{job_id}/convert",
+            json={"mode": "auto", "engine": "fast", "skip_first_page": True},
+        ).json()
+        assert started["ok"] is True, started
+
+        deadline = time.time() + 120
+        snap: dict = {}
+        while time.time() < deadline:
+            snap = client.get(f"/api/jobs/{job_id}").json()
+            if snap["status"] in ("done", "error"):
+                break
+            time.sleep(0.2)
+        assert snap["status"] == "done", snap.get("error")
+        assert snap["options"]["skip_first_page"] is True
+        assert [p["page"] for p in snap["result"]["pages"]] == [2]
+    finally:
+        client.delete(f"/api/jobs/{job_id}")
+
+
 # -------------------------------------------------------------------- runner
 def main() -> int:
     tests = [

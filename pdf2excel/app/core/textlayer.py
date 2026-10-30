@@ -8,8 +8,17 @@ from __future__ import annotations
 import re
 import statistics
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from .models import TextItem
+
+try:                                  # cần cho FPDFText_GetCharOrigin
+    import ctypes as _ctypes
+
+    import pypdfium2.raw as _pdfium_raw
+except Exception:                     # thiếu bản build -> bỏ qua bước chữ dọc
+    _ctypes = None
+    _pdfium_raw = None
 
 _CJK_RANGES = (
     (0x2E80, 0x9FFF),    # CJK radicals .. CJK unified ideographs
@@ -27,12 +36,144 @@ def is_cjk(ch: str) -> bool:
     return any(a <= cp <= b for a, b in _CJK_RANGES)
 
 
+def _page_geometry(page) -> tuple[int, float, float, float, float]:
+    """(rotate, x_off, y_off, w0, h0) của trang *chưa* xoay, đơn vị point.
+
+    pdfium trả hộp bao ký tự trong hệ toạ độ gốc của trang (gốc dưới trái, y
+    hướng lên, chưa áp dụng /Rotate), còn ảnh render lại đã xoay theo /Rotate.
+    """
+    try:
+        rot = int(page.get_rotation()) % 360
+    except Exception:
+        rot = 0
+    try:
+        left, bottom, right, top = page.get_mediabox()
+        w0, h0 = right - left, top - bottom
+    except Exception:
+        w, h = page.get_size()
+        left = bottom = 0.0
+        w0, h0 = (h, w) if rot in (90, 270) else (w, h)
+    if w0 <= 0 or h0 <= 0:            # mediabox hỏng -> đoán theo /Rotate
+        w, h = page.get_size()
+        left = bottom = 0.0
+        w0, h0 = (h, w) if rot in (90, 270) else (w, h)
+    return rot, left, bottom, w0, h0
+
+
+def _char_origin(tp, index: int) -> tuple[float, float] | None:
+    """Gốc của ký tự trong hệ toạ độ gốc của trang (point, y hướng lên)."""
+    if _pdfium_raw is None:
+        return None
+    try:
+        x = _ctypes.c_double()
+        y = _ctypes.c_double()
+        ok = _pdfium_raw.FPDFText_GetCharOrigin(
+            tp.raw, index, _ctypes.byref(x), _ctypes.byref(y)
+        )
+        return (x.value, y.value) if ok else None
+    except Exception:
+        return None
+
+
+@dataclass
+class _Entry:
+    index: int
+    text: str
+    origin: tuple[float, float] | None
+    box: tuple[float, float, float, float]
+
+
+def _reslice_runs(entries: list[_Entry], tol: float = 0.6) -> None:
+    """Chia lại hộp bao cho dòng chữ mà pdfium cắt thành lát mỏng.
+
+    Có những dòng (thường là chữ xoay trong bản vẽ kỹ thuật) mà pdfium trả
+    *cùng một gốc* cho mọi ký tự và cắt hộp bao thành những lát mỏng vuông
+    góc với chiều chạy của dòng, mỗi lát lại kéo dài hết cả dòng. Hệ quả: mỗi
+    ký tự nhận hộp bao của cả dòng, nên khi ghép chữ trong ô, mỗi ký tự bị
+    xếp vào một "dòng" riêng — "项目分类" thành "项\\n目\\n分\\n类".
+    Gom các ký tự cùng gốc rồi cắt lại dòng thành từng đoạn bằng nhau.
+
+    Chỉ xử lý dòng nằm ngang trên ảnh (sau khi đã áp dụng /Rotate). Dòng chạy
+    dọc để nguyên: các lát khi đó nằm cạnh nhau theo trục x nên vẫn ghép ra
+    đúng thứ tự, còn nếu cắt lại theo trục y thì mỗi ký tự thành một dòng
+    riêng trong Excel — sai hơn nhiều.
+    """
+    groups: dict[tuple[int, int], list[_Entry]] = {}
+    for e in entries:
+        if e.origin is None:
+            continue
+        key = (round(e.origin[0] / tol), round(e.origin[1] / tol))
+        groups.setdefault(key, []).append(e)
+
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        x0 = min(e.box[0] for e in group)
+        y0 = min(e.box[1] for e in group)
+        x1 = max(e.box[2] for e in group)
+        y1 = max(e.box[3] for e in group)
+        w, h = x1 - x0, y1 - y0
+        if w <= 0 or h <= 0 or w < h:
+            continue
+        # chỉ cắt lại khi các hộp bao đúng là lát mỏng xếp chồng theo trục dọc
+        if not all((e.box[3] - e.box[1]) <= 0.6 * h for e in group):
+            continue
+        n = len(group)
+        order = sorted(group, key=lambda e: e.box[1] + e.box[3])
+        step = w / n
+        for k, e in enumerate(order):
+            e.box = (x0 + k * step, y0, x0 + (k + 1) * step, y1)
+
+
+def _overlap_ratio(a, b) -> float:
+    ix = min(a[2], b[2]) - max(a[0], b[0])
+    iy = min(a[3], b[3]) - max(a[1], b[1])
+    if ix <= 0 or iy <= 0:
+        return 0.0
+    small = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return (ix * iy) / small if small > 0 else 0.0
+
+
+def _drop_covered(entries: list[_Entry], ratio: float = 0.6) -> None:
+    """Bỏ lớp chữ cũ bị vẽ đè (file PDF sửa tay để lại chữ cũ bên dưới).
+
+    Ví dụ trang 2 của JYCP: ô "页码" có cả "共7页第2页" (vẽ sau) lẫn "共2页第7页"
+    (vẽ trước, bị che). Giữ bản vẽ sau vì đó là bản nhìn thấy trên giấy.
+    """
+    n = len(entries)
+    if n < 2:
+        return
+    alive = [True] * n
+    order = sorted(range(n), key=lambda i: entries[i].box[1])
+    for a_pos, i in enumerate(order):
+        if not alive[i]:
+            continue
+        bi = entries[i].box
+        for j in order[a_pos + 1:]:
+            bj = entries[j].box
+            if bj[1] >= bi[3]:
+                break
+            if not alive[j] or entries[j].text == entries[i].text:
+                continue
+            if _overlap_ratio(bi, bj) > ratio:
+                if entries[j].index > entries[i].index:
+                    alive[i] = False
+                    break
+                alive[j] = False
+    entries[:] = [e for k, e in enumerate(entries) if alive[k]]
+
+
 def page_text_items(page, scale: float) -> list[TextItem]:
-    """Lấy từng ký tự của text layer kèm toạ độ pixel (y hướng xuống)."""
-    width_pt, height_pt = page.get_size()
+    """Lấy từng ký tự của text layer kèm toạ độ pixel (y hướng xuống).
+
+    Phải xoay hộp bao theo /Rotate của trang. Trang nằm ngang nhưng lưu dưới
+    dạng dọc (/Rotate 90) nếu bỏ qua bước này sẽ ra toạ độ âm, chữ bị ghép
+    vào sai ô và cả bảng thành rác.
+    """
+    rot, off_x, off_y, w0, h0 = _page_geometry(page)
     tp = page.get_textpage()
     n = tp.count_chars()
-    items: list[TextItem] = []
+    entries: list[_Entry] = []
     for i in range(n):
         try:
             ch = tp.get_text_range(i, 1)
@@ -41,19 +182,39 @@ def page_text_items(page, scale: float) -> list[TextItem]:
         if not ch or not ch.strip():
             continue
         try:
-            x0, y0, x1, y1 = tp.get_charbox(i)
+            left, bottom, right, top = tp.get_charbox(i)
         except Exception:
             continue
-        items.append(
-            TextItem(
-                x0=x0 * scale,
-                y0=(height_pt - y1) * scale,
-                x1=x1 * scale,
-                y1=(height_pt - y0) * scale,
+        origin = _char_origin(tp, i)
+        left -= off_x
+        right -= off_x
+        bottom -= off_y
+        top -= off_y
+
+        if rot == 90:                 # xoay 90° theo chiều kim đồng hồ
+            x0, y0, x1, y1 = bottom, left, top, right
+        elif rot == 180:
+            x0, y0, x1, y1 = w0 - right, h0 - top, w0 - left, h0 - bottom
+        elif rot == 270:
+            x0, y0, x1, y1 = h0 - top, w0 - right, h0 - bottom, w0 - left
+        else:
+            x0, y0, x1, y1 = left, h0 - top, right, h0 - bottom
+
+        entries.append(
+            _Entry(
+                index=i,
                 text=ch,
+                origin=origin,
+                box=(x0 * scale, y0 * scale, x1 * scale, y1 * scale),
             )
         )
-    return items
+
+    _reslice_runs(entries)
+    _drop_covered(entries)
+    return [
+        TextItem(x0=e.box[0], y0=e.box[1], x1=e.box[2], y1=e.box[3], text=e.text)
+        for e in entries
+    ]
 
 
 def _median_height(items: list[TextItem]) -> float:

@@ -13,7 +13,26 @@ const ROW_LIMIT = 120;   // số dòng vẽ trước cho bảng lớn (giữ UI 
 
 const state = {
   jobs: new Map(), // id -> { snap, result, edits, include, es, rowLimit, exported, exportError }
+  skipFirst: true, // bỏ qua trang 1 cho tất cả file (mặc định bật)
 };
+
+/* ------------------------------------------- tuỳ chọn chung: bỏ qua trang 1 */
+const SKIP_FIRST_KEY = "pdf2excel.skipFirstPage";
+
+function loadSkipFirst() {
+  try {
+    const v = localStorage.getItem(SKIP_FIRST_KEY);
+    return v === null ? true : v === "1";
+  } catch {
+    return true;
+  }
+}
+
+function saveSkipFirst(on) {
+  try {
+    localStorage.setItem(SKIP_FIRST_KEY, on ? "1" : "0");
+  } catch { /* trình duyệt chặn localStorage — vẫn dùng trong phiên này */ }
+}
 
 /* ------------------------------------------------------------------ tiện ích */
 function toast(msg, ms = 3600) {
@@ -125,23 +144,49 @@ function pendingJobIds() {
   return ids;
 }
 
+/** File đã xử lý xong (để chạy lại khi đổi tuỳ chọn chung). */
+function finishedJobIds() {
+  const ids = [];
+  state.jobs.forEach((st, id) => {
+    if (["done", "cancelled", "error"].includes(st.snap.status)) ids.push(id);
+  });
+  return ids;
+}
+
+/** Nút chung: ưu tiên file đang chờ, không còn thì cho chạy lại tất cả. */
+function runnableJobs() {
+  const pending = pendingJobIds();
+  if (pending.length) return { ids: pending, rerun: false };
+  return { ids: finishedJobIds(), rerun: true };
+}
+
 function updateRunAllButton() {
   const btn = $("#btn-run-all");
   if (!btn) return;
-  const n = pendingJobIds().length;
-  btn.hidden = n === 0;
-  btn.disabled = n === 0;
-  btn.textContent = n > 1 ? `Chuyển đổi tất cả (${n})` : "Chuyển đổi tất cả";
+  const { ids, rerun } = runnableJobs();
+  btn.hidden = ids.length === 0;
+  btn.disabled = ids.length === 0;
+  btn.classList.toggle("ghost", rerun);
+  const base = rerun ? "Chuyển đổi lại tất cả" : "Chuyển đổi tất cả";
+  btn.textContent = ids.length > 1 ? `${base} (${ids.length})` : base;
+  btn.title = rerun
+    ? "Áp dụng tuỳ chọn hiện tại (vd. bỏ qua trang 1) cho mọi file đã tải"
+    : "";
 }
 
 function runAll() {
-  const ids = pendingJobIds();
+  const { ids, rerun } = runnableJobs();
   if (!ids.length) {
-    toast("Không có file nào đang chờ chuyển đổi.");
+    toast("Không có file nào để chuyển đổi.");
     return;
   }
   for (const id of ids) startConvert(id, "auto", "fast");
-  toast(`Đã bắt đầu chuyển đổi ${ids.length} file — server xử lý lần lượt.`, 5000);
+  toast(
+    rerun
+      ? `Đã bắt đầu chuyển đổi lại ${ids.length} file với tuỳ chọn hiện tại.`
+      : `Đã bắt đầu chuyển đổi ${ids.length} file — server xử lý lần lượt.`,
+    5000
+  );
   updateRunAllButton();
 }
 
@@ -159,7 +204,12 @@ async function startConvert(jobId, mode, engine) {
     await api(`/api/jobs/${jobId}/convert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode, engine, page_modes: pageModes }),
+      body: JSON.stringify({
+        mode,
+        engine,
+        page_modes: pageModes,
+        skip_first_page: state.skipFirst,
+      }),
     });
   } catch (err) {
     const msg = String(err.message);
@@ -464,13 +514,18 @@ function controlsBlock(jobId, { withButton = true, label = "Chuyển đổi" } =
   if (st.snap.analysis && st.snap.analysis.pages && st.snap.analysis.pages.length > 1) {
     const pages = el("div", "pages");
     for (const p of st.snap.analysis.pages) {
-      const chip = el("span", "chip " + p.kind);
+      const skipped = state.skipFirst && p.page === 1;
+      const chip = el("span", "chip " + p.kind + (skipped ? " skipped" : ""));
       chip.append(el("span", null, "Trang " + p.page));
-      const sel = el("select");
-      sel.append(new Option("text", "text"), new Option("scan", "scan"));
-      sel.value = p.kind;
-      sel.dataset.page = p.page;
-      chip.append(sel);
+      if (skipped) {
+        chip.append(el("span", "muted", "bỏ qua"));
+      } else {
+        const sel = el("select");
+        sel.append(new Option("text", "text"), new Option("scan", "scan"));
+        sel.value = p.kind;
+        sel.dataset.page = p.page;
+        chip.append(sel);
+      }
       pages.append(chip);
     }
     box.append(pages);
@@ -712,6 +767,26 @@ async function removeJob(jobId) {
 $("#btn-browse").onclick = () => $("#file").click();
 $("#file").onchange = (e) => uploadFiles(e.target.files);
 $("#btn-run-all").onclick = runAll;
+
+// Công tắc chung: bỏ qua trang 1 — nhớ lựa chọn cho lần mở sau
+state.skipFirst = loadSkipFirst();
+const skipFirstBox = $("#opt-skip-first");
+if (skipFirstBox) {
+  skipFirstBox.checked = state.skipFirst;
+  skipFirstBox.onchange = () => {
+    state.skipFirst = skipFirstBox.checked;
+    saveSkipFirst(state.skipFirst);
+    toast(
+      state.skipFirst
+        ? "Đã bật: bỏ qua trang 1 cho tất cả file."
+        : "Đã tắt: xử lý cả trang 1.",
+      4000
+    );
+    // cập nhật lại chip từng trang trên mọi thẻ
+    state.jobs.forEach((_st, id) => renderCard(id));
+    updateRunAllButton();
+  };
+}
 
 const drop = $("#drop");
 ["dragenter", "dragover"].forEach((ev) =>

@@ -51,23 +51,29 @@ Dừng: nhấn `Ctrl+C` trong cửa sổ lệnh.
 
 ## 4. Sử dụng
 
-1. Kéo–thả (hoặc bấm **chọn file**) một hay nhiều PDF. Tối đa 20 file,
+1. (Tuỳ chọn) Công tắc **Bỏ qua trang 1** ngay dưới ô kéo–thả, **bật sẵn**:
+   app bỏ hẳn trang 1 và xử lý từ trang 2 — dành cho file mà trang đầu là bản vẽ
+   AutoCAD. Công tắc áp dụng cho **tất cả file** trong một lần bấm và được ghi
+   nhớ cho lần mở sau. File chỉ có 1 trang thì vẫn được xử lý (kèm cảnh báo).
+2. Kéo–thả (hoặc bấm **chọn file**) một hay nhiều PDF. Tối đa 20 file,
    100 MB/file.
-2. App tự phân tích rồi **tự chuyển đổi ngay** — không cần bấm từng file.
+3. App tự phân tích rồi **tự chuyển đổi ngay** — không cần bấm từng file.
    Thanh tiến độ hiện `Trang 3/6: OCR ảnh · 24s (còn ~49s)` và nhích mỗi giây,
    kể cả khi một trang scan cần 5–10 giây. Có nút **Dừng** nếu muốn huỷ.
-3. Xem trước bảng ngay trên web khi xong:
+4. Xem trước bảng ngay trên web khi xong:
    * bấm vào ô để **sửa trực tiếp** (nội dung sửa được ghi vào Excel);
    * ô **tô vàng** = OCR có độ tin cậy < 0,75, nên kiểm tra lại;
    * **Xem trang** để đối chiếu với ảnh trang gốc;
    * bỏ tick nếu không muốn xuất bảng đó.
-4. Bấm **Tải Excel** — file được tải thẳng về thư mục Downloads, trang không bị
+5. Bấm **Tải Excel** — file được tải thẳng về thư mục Downloads, trang không bị
    đổi. Muốn tải lại lần nữa thì bấm **Tải lại**. Nhiều file đã xong →
    **Tải tất cả (.zip)**.
-5. Muốn đổi cách đọc (text/scan) hoặc chạy lại: mở **Tuỳ chọn nâng cao /
-   chuyển đổi lại** ở cuối thẻ.
-6. Nếu có file đang chờ/chạy lỗi/đã dừng, nút **Chuyển đổi tất cả (N)** ở góc
-   trên bên phải sẽ chạy lại **tất cả** các file đó bằng một lần bấm.
+6. Muốn đổi cách đọc (text/scan) hoặc chạy lại: mở **Tuỳ chọn nâng cao /
+   chuyển đổi lại** ở cuối thẻ. Trang 1 đang bị bỏ qua sẽ hiện chip `bỏ qua`.
+7. Nút ở góc trên bên phải dùng cho **mọi file cùng lúc**: còn file đang
+   chờ/lỗi/đã dừng thì là **Chuyển đổi tất cả (N)**, khi tất cả đã xong thì
+   thành **Chuyển đổi lại tất cả (N)** — bấm một lần để áp dụng tuỳ chọn hiện
+   tại (ví dụ vừa tắt/bật *Bỏ qua trang 1*) cho toàn bộ file đã tải.
 
 ## 5. File Excel nhận được
 
@@ -160,13 +166,17 @@ xử lý ô gộp một cách tự nhiên (ô gộp = một vùng trắng lớn 
 | 1 trang scan (PDF chỉ có ảnh) | ~8,8 giây/trang (OCR tiếng Trung) |
 | 6 trang scan liên tục | 53 giây (7–9 s/trang), tiến độ + ETA cập nhật mỗi giây |
 | `PDF_scan.pdf` 4 trang scan (bảng biểu + ảnh) | ~33 giây, 9 bảng, không còn ô khổng lồ |
+| `JYCP-CRB 06812309` 7 trang (`/Rotate 90`) | 14,3 s nếu lấy cả trang 1; **2,0 s** khi bỏ qua trang 1 (6 bảng, đúng từng ô) |
 
 ## 8. Giới hạn & lưu ý
 
 * **Bảng không có đường kẻ**: app thử chia cột theo khoảng trắng; kết quả có
   thể lệch — nên xem lại bảng trên web trước khi tải.
-* **Trang bản vẽ** (ví dụ trang 1 của form WI): vùng hình vẽ được **bỏ qua** để
-  không tạo ô khổng lồ; chữ nằm trong hình vẽ sẽ không có trong file Excel.
+* **Trang bản vẽ** (trang 1 của form WI, bản vẽ AutoCAD): công tắc **Bỏ qua
+  trang 1** đang bật sẵn nên app xử lý từ trang 2. Bản vẽ có hàng nghìn nét
+  vector nên vừa chậm vừa sinh nhiều "bảng rác" — bỏ qua vừa nhanh hơn nhiều
+  (file JYCP 7 trang: 14,3 s → 2,0 s) vừa sạch kết quả. Cần lấy cả trang 1 thì
+  tắt công tắc rồi bấm **Chuyển đổi lại tất cả**.
 * **Cột chỉ chứa ảnh** (ví dụ cột "图片示例"): không xuất được ảnh sang Excel nên
   cột đó có thể không thành ô — nội dung ảnh không nằm trong file Excel.
 * **Bảng lồng trong bảng** hoặc bảng nhiều tầng header rất phức tạp: nên thử
@@ -194,7 +204,7 @@ xử lý ô gộp một cách tự nhiên (ô gộp = một vùng trắng lớn 
 | Method | Đường dẫn | Việc |
 |---|---|---|
 | `POST` | `/api/jobs` | Tải lên (multipart, field `files`), trả về `id` + phân tích trang |
-| `POST` | `/api/jobs/{id}/convert` | `{mode: auto\|text\|ocr, engine: fast\|deep, page_modes: {"1": "scan"}}` |
+| `POST` | `/api/jobs/{id}/convert` | `{mode: auto\|text\|ocr, engine: fast\|deep, page_modes: {"1": "scan"}, skip_first_page: true}` |
 | `POST` | `/api/jobs/{id}/cancel` | Dừng job đang chạy (dừng sau trang hiện tại) |
 | `GET` | `/api/jobs/{id}` | Trạng thái + kết quả JSON (lưới, span, ô tin cậy thấp) |
 | `GET` | `/api/jobs/{id}/events` | SSE tiến độ (có thêm sự kiện `tick` mỗi 1,2 giây) |
@@ -232,6 +242,10 @@ Python, không cần reportlab). Có thể chạy bằng `pytest tests/ -q`.
 | Bảng bị tách thành nhiều sheet | Các bảng thật sự rời nhau; gộp lại bằng tay trong Excel nếu cần |
 | Bảng thiếu chữ | Thử engine "sâu" hoặc sửa trực tiếp trên web rồi tải lại |
 | Excel báo lỗi khi mở | Kiểm tra đã tải xong (file > 4 KB); tải lại từ nút **Tải Excel** |
+| Cả bảng thành rác, chữ nằm sai ô (file có `/Rotate 90`) | Đã sửa: hộp bao ký tự của pdfium nằm ở hệ toạ độ **chưa xoay**, nay app xoay theo `/Rotate` của trang. Nếu vẫn lỗi, gửi lại file. |
+| Ô header ra `项\n目\n分\n类` (mỗi ký tự một dòng) | Đã sửa: dòng chữ mà pdfium cắt thành lát mỏng được chia lại theo chiều chạy của dòng. |
+| Ô hiện chữ cũ đã bị vẽ đè (vd. `共2页第7页`) | Đã sửa: bỏ lớp chữ nằm dưới, giữ lớp vẽ sau (lớp nhìn thấy trên giấy). |
+| Trang bản vẽ AutoCAD làm app rất chậm | Bật **Bỏ qua trang 1** (mặc định đã bật) rồi **Chuyển đổi lại tất cả**. |
 
 ## 13. Cấu trúc mã nguồn
 

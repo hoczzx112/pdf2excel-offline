@@ -40,6 +40,7 @@ class ConvertBody(BaseModel):
     mode: str = "auto"           # auto | text | ocr
     engine: str = "fast"         # fast | deep
     page_modes: dict[str, str] = {}
+    skip_first_page: bool = False  # bỏ trang 1 (bìa / bản vẽ AutoCAD)
 
 
 class ExportBody(BaseModel):
@@ -137,7 +138,8 @@ def start_convert(job_id: str, body: ConvertBody) -> dict:
         except (TypeError, ValueError):
             continue
     return manager.start(
-        job, mode=body.mode, engine=body.engine, page_modes=page_modes
+        job, mode=body.mode, engine=body.engine, page_modes=page_modes,
+        skip_first_page=body.skip_first_page,
     )
 
 
