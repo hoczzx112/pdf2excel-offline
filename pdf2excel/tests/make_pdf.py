@@ -34,6 +34,36 @@ def _text(x: float, y: float, text: str, rotate: int, page_h: float) -> str:
     return f"BT /F1 11 Tf 1 0 0 1 {u:.1f} {v:.1f} Tm ({_esc(text)}) Tj ET"
 
 
+def _circle_slash(cx: float, cy: float, rx: float, ry: float,
+                  rotate: int, page_h: float) -> str:
+    """Ký hiệu ø vẽ bằng NÉT (elip + gạch chéo), không phải chữ.
+
+    Giống cách AutoCAD vẽ ký hiệu đường kính: text layer không có ký tự nào,
+    nên chỉ nhận ra được nếu đọc hình học.
+    """
+    k = 0.5523
+    pts = [
+        (cx + rx, cy),
+        (cx + rx, cy - k * ry), (cx + k * rx, cy - ry), (cx, cy - ry),
+        (cx - k * rx, cy - ry), (cx - rx, cy - k * ry), (cx - rx, cy),
+        (cx - rx, cy + k * ry), (cx - k * rx, cy + ry), (cx, cy + ry),
+        (cx + k * rx, cy + ry), (cx + rx, cy + k * ry), (cx + rx, cy),
+    ]
+    mapped = [_to_pdf(px, py, rotate, page_h) for px, py in pts]
+    ops = [f"{mapped[0][0]:.1f} {mapped[0][1]:.1f} m"]
+    for i in range(1, len(mapped), 3):
+        (a, b), (c, d), (e, f) = mapped[i], mapped[i + 1], mapped[i + 2]
+        ops.append(
+            f"{a:.1f} {b:.1f} {c:.1f} {d:.1f} {e:.1f} {f:.1f} c"
+        )
+    ops.append("h")
+    # gạch chéo cùng một path để pdfium trả về một hộp bao duy nhất
+    s0 = _to_pdf(cx - 0.8 * rx, cy + 0.9 * ry, rotate, page_h)
+    s1 = _to_pdf(cx + 0.8 * rx, cy - 0.9 * ry, rotate, page_h)
+    ops.append(f"{s0[0]:.1f} {s0[1]:.1f} m {s1[0]:.1f} {s1[1]:.1f} l S")
+    return " ".join(ops)
+
+
 def build_table_pdf(
     path: str | Path,
     header: tuple[str, ...] = ("Code", "Name", "Qty"),
@@ -41,11 +71,13 @@ def build_table_pdf(
     page: tuple[float, float] = (595, 842),
     rotate: int = 0,
     page_count: int = 1,
+    diameter: bool = False,
 ) -> Path:
     """Một hoặc nhiều trang A4, mỗi trang có 1 bảng kẻ 3 cột.
 
     rotate: ghi /Rotate vào trang (90 = trang nằm ngang nhưng lưu dạng dọc).
     page_count: số trang, nội dung giống nhau.
+    diameter: vẽ thêm ký hiệu ø bằng nét vector trước giá trị Qty hàng 1.
     """
     disp_w, disp_h = (page[1], page[0]) if rotate in (90, 270) else (page[0], page[1])
 
@@ -79,7 +111,16 @@ def build_table_pdf(
         y_text = y_top + (r_idx + 1) * row_h - 7
         x_cell = x0
         for i, w in enumerate(col_w):
-            ops.append(_text(x_cell + 5, y_text, row[i], rotate, page[1]))
+            if diameter and r_idx == 1 and i == 2:
+                # ký hiệu ø nằm ngay trước giá trị, chữ dịch sang phải 9pt
+                ops.append(
+                    _circle_slash(
+                        x_cell + 5 + 2.75, y_text - 4.5, 2.75, 4.5, rotate, page[1]
+                    )
+                )
+                ops.append(_text(x_cell + 5 + 9, y_text, row[i], rotate, page[1]))
+            else:
+                ops.append(_text(x_cell + 5, y_text, row[i], rotate, page[1]))
             x_cell += w
 
     content = "\n".join(ops).encode("latin-1")

@@ -209,6 +209,43 @@ def test_workbook_structure() -> None:
     assert ws.max_row == 3 and ws.max_column == 3
 
 
+def test_empty_cells_are_blank_not_empty_string() -> None:
+    """Ô không có chữ phải là ô TRỐNG thật, không phải chuỗi rỗng.
+
+    Trước đây gán "" làm openpyxl ghi <is><t></t></is> (inlineStr), Excel coi
+    là ô có giá trị: COUNTA đếm và "Go To Special → Blanks" bỏ sót.
+    """
+    from openpyxl import load_workbook
+
+    tmp = _tmpdir()
+    pdf = build_table_pdf(
+        tmp / "blank.pdf",
+        rows=(("A1", "Bolt M6", ""), ("A2", "Nut M6", "20")),
+    )
+    res = convert(pdf)
+    assert res.tables[0].grid()[1][2] == ""
+
+    out = save_workbook(res, tmp / "blank.xlsx")
+    ws = load_workbook(out)["T1-B1"]
+    empty = ws["C2"]
+    assert empty.value is None, repr(empty.value)
+    assert empty.data_type == "n", empty.data_type
+
+
+def test_vector_diameter_symbol_is_recovered() -> None:
+    """Ký hiệu ø vẽ bằng nét vector (không có trong text layer) phải đọc được."""
+    tmp = _tmpdir()
+    pdf = build_table_pdf(tmp / "dia.pdf", diameter=True)
+    res = convert(pdf)
+
+    table = res.tables[0]
+    grid = table.grid()
+    assert grid[1][2] == "\u00f810", grid[1]
+    # không sinh ký hiệu ø giả ở các ô khác
+    assert grid[0] == ["Code", "Name", "Qty"]
+    assert grid[2] == ["A2", "Nut M6", "20"]
+
+
 def test_soft_join_removes_hard_line_breaks() -> None:
     """Ô dài phải để Excel tự xuống dòng, không chèn "\\n" (Alt+Enter)."""
     from app.export.xlsx import _soft_join

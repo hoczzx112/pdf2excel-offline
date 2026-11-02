@@ -87,7 +87,8 @@ một sheet `Kết quả` trống kèm ghi chú, để Excel mở được bình
 
 Ô OCR độ tin cậy thấp được tô vàng và có ghi chú (comment) kèm điểm tin cậy.
 Nội dung bắt đầu bằng `=` được lưu dạng **chuỗi**, không bị Excel hiểu thành
-công thức.
+công thức. Ô không có nội dung được để **trống thật** (không ghi chuỗi rỗng),
+nên `ISBLANK`, `COUNTA` và *Go To Special → Blanks* hoạt động đúng.
 
 Chữ dài trong ô **không** bị chèn xuống dòng cứng (Alt+Enter) theo đúng chỗ
 ngắt của bản PDF nữa. App nối các dòng đó lại thành một đoạn (chèn khoảng trắng
@@ -117,7 +118,7 @@ PDF ──► render trang (200 DPI) ──► nhị phân hoá
         không chèn khoảng trắng giữa chữ Hán) → Excel
 ```
 
-Hai lỗi thường gặp trên bản scan và cách xử lý:
+Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách xử lý:
 
 * **Nhiều ô bị gộp thành một ô khổng lồ** — nét kẻ trong bản scan bị đứt 1–2 px
   nên vùng trắng "chảy" qua khe và nối nhiều ô thành một. App vá khe hở theo
@@ -146,6 +147,13 @@ Hai lỗi thường gặp trên bản scan và cách xử lý:
   ngoài độ chồng lấn còn so **đường chân** (đáy hộp bao) với dung sai
   ~0,35 chiều cao chữ, và không chèn khoảng trắng sát dấu câu. Ô chỉ có số còn
   được chuẩn hoá dấu phẩy: PDF lúc dùng `,` lúc dùng `，` → luôn ra `1,2`.
+* **Ký hiệu `ø` bị mất** (file xuất từ AutoCAD) — ký hiệu đường kính được **vẽ
+  bằng nét vector** (một vòng elip bị gạch chéo), text layer hoàn toàn không có
+  ký tự nào, nên đọc chữ không bao giờ thấy. Nay app dò thêm các *path* vector
+  cỡ một ký tự và nhận dạng hình học: ảnh render là vòng kín chia thành **đúng
+  2 lỗ** nhỏ, gần bằng nhau. Nhờ vậy ô ra `ø73(0/-0.009)` thay vì
+  `73(0/-0.009)`; nét kẻ bảng và ô checkbox (1 lỗ to, hoặc 2 lỗ không cân) bị
+  loại nên không sinh ký hiệu giả.
 
 Vì sao không dùng thư viện nhận dạng bảng phổ biến?
 
@@ -261,6 +269,7 @@ pdf2excel/
 │  │  ├─ extract.py            # điều phối theo trang
 │  │  ├─ gridlines.py          # nhị phân hoá, xoá vùng chữ
 │  │  ├─ textlayer.py          # toạ độ ký tự từ pdfium + ghép chữ
+│  │  ├─ vectorglyph.py        # nhận ký hiệu ø vẽ bằng nét vector
 │  │  ├─ ocr.py                # RapidOCR (ONNX/PyTorch)
 │  │  ├─ tables.py             # dựng bảng, fallback chia cột theo khoảng trắng
 │  │  ├─ detect.py             # phân loại trang text/scan

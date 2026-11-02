@@ -67,7 +67,11 @@ def _soft_join(text: str) -> str:
 
 
 def _set_text(cell, text: str) -> None:
-    cell.value = _clean(text)
+    text = _clean(text)
+    # Ô không có chữ phải là ô TRỐNG thật (bỏ hẳn giá trị). Nếu gán chuỗi rỗng,
+    # openpyxl ghi <is><t></t></is> và Excel coi là ô có giá trị (COUNTA đếm,
+    # "Go To Special → Blanks" không chọn được) dù hiển thị trống.
+    cell.value = text or None
     # tránh openpyxl hiểu nhầm nội dung bắt đầu bằng "=" thành công thức
     if isinstance(cell.value, str) and cell.value.startswith("="):
         cell.data_type = "s"
