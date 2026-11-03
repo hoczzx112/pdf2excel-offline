@@ -289,6 +289,40 @@ def test_vector_diameter_symbol_is_recovered() -> None:
     assert grid[2] == ["A2", "Nut M6", "20"]
 
 
+def test_text_drawn_as_outline_is_not_read_as_diameter() -> None:
+    """Chuỗi chữ vẽ bằng nét (vd "300s") không được nhận thành "ø300s".
+
+    File WI-JQX vẽ cụm "300s" bằng path có hộp bao trùm cả cụm; hai chữ "0"
+    cạnh nhau tạo ra đúng 2 lỗ tròn nên bộ dò ø (chỉ đếm lỗ) bị lừa. Nét vẽ
+    thật của ø là MỘT khối liền và hai lỗ lệch nhau theo cả hai trục.
+    """
+    import cv2
+    import numpy as np
+
+    from app.core.vectorglyph import looks_like_diameter
+
+    def blank(h: int, w: int) -> np.ndarray:
+        return np.full((h, w), 255, np.uint8)
+
+    # "300s": 4 nét rời, hai chữ "0" tạo 2 lỗ tròn NGANG nhau
+    text_run = blank(31, 57)
+    for cx in (7, 22, 37, 51):
+        cv2.ellipse(text_run, (cx, 15), (5, 9), 0, 0, 360, 0, 2)
+    assert not looks_like_diameter(text_run)
+
+    # ký hiệu ø thật: vòng liền + gạch chéo -> 1 khối, 2 lỗ chéo nhau
+    diameter = blank(31, 31)
+    cv2.ellipse(diameter, (15, 15), (9, 13), 0, 0, 360, 0, 2)
+    cv2.line(diameter, (5, 25), (25, 5), 0, 2)
+    assert looks_like_diameter(diameter)
+
+    # chữ "8" (1 khối, 2 lỗ nhưng cùng trục dọc) cũng không phải ø
+    eight = blank(31, 21)
+    cv2.ellipse(eight, (10, 9), (7, 6), 0, 0, 360, 0, 2)
+    cv2.ellipse(eight, (10, 22), (7, 6), 0, 0, 360, 0, 2)
+    assert not looks_like_diameter(eight)
+
+
 def test_space_between_number_and_thread_class() -> None:
     """Giữ dấu cách thật của PDF: "6-M5×0.8 6H", không dính thành "0.86H".
 

@@ -58,33 +58,65 @@ def _to_pixels(rot, left, bottom, right, top, off_x, off_y, w0, h0):
 
 
 def looks_like_diameter(crop: np.ndarray) -> bool:
-    """True nếu vùng ảnh là vòng kín bị gạch chéo (ký hiệu ø)."""
+    """True nếu vùng ảnh là vòng kín bị gạch chéo (ký hiệu ø).
+
+    Nhiều file xuất từ CAD vẽ **cả chuỗi chữ** bằng nét (text ảo) — khi đó hộp
+    bao của path trùng với cả cụm chữ, và hai chữ "0" cạnh nhau cũng tạo ra
+    đúng 2 lỗ tròn như ký hiệu ø. Vì vậy ngoài số lỗ còn phải kiểm tra:
+
+    * nét vẽ là **một** khối liền (vòng + gạch chéo dính nhau), không phải
+      nhiều nét rời như các chữ cái;
+    * hai lỗ nằm **sát nhau theo cả hai trục** — gạch chéo chỉ là một nét mảnh
+      cắt vòng, nên hộp bao của hai lỗ chồng lên nhau. Hai chữ "0" đứng cạnh
+      nhau thì hở theo trục ngang, chữ "8" thì hở theo trục dọc.
+    """
     if crop.size == 0:
         return False
     ink = (crop < 128).astype(np.uint8)
     if int(ink.sum()) < 12:
         return False
     h, w = ink.shape
+
+    # nét vẽ phải là một khối liền (bỏ qua đốm nhiễu do khử răng cưa)
+    n_ink, _lbl, st_ink, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    if n_ink < 2:
+        return False
+    if int(st_ink[1:, 4].max()) < 0.9 * int(ink.sum()):
+        return False
+
     n, _labels, stats, _cent = cv2.connectedComponentsWithStats(
         1 - ink, connectivity=4
     )
-    holes: list[tuple[int, int, int]] = []
+    # mỗi lỗ: (area, x0, y0, x1, y1)
+    holes: list[tuple[int, float, float, float, float]] = []
     for i in range(1, n):
         x, y, cw, ch, area = (int(v) for v in stats[i][:5])
         if x <= 0 or y <= 0 or x + cw >= w or y + ch >= h:
             continue                      # chạm biên = nền ngoài vòng
-        holes.append((area, cw, ch))
+        holes.append((area, float(x), float(y), float(x + cw), float(y + ch)))
     if len(holes) != 2:                   # ø = bị gạch chia làm đúng 2 lỗ
         return False
-    frac = sum(a for a, _, _ in holes) / float(w * h)
+    frac = sum(h[0] for h in holes) / float(w * h)
     if not 0.12 <= frac <= 0.38:
         return False
     a1, a2 = holes[0][0], holes[1][0]
     if max(a1, a2) == 0 or min(a1, a2) / float(max(a1, a2)) < 0.55:
         return False
-    for _area, cw, ch in holes:
-        if cw > 0.60 * w or ch > 0.80 * h:
+    for _area, x0, y0, x1, y1 in holes:
+        if x1 - x0 > 0.60 * w or y1 - y0 > 0.80 * h:
             return False
+
+    # hai lỗ phải chồng lên nhau (theo cả x và y) sau khi nới một chút: nét
+    # gạch chéo rất mảnh nên hộp bao hai nửa vòng gần như trùng nhau.
+    def _gap(a0: float, a1: float, b0: float, b1: float) -> float:
+        return max(0.0, max(a0, b0) - min(a1, b1))
+
+    tol_x = 0.20 * max(holes[0][3] - holes[0][1], holes[1][3] - holes[1][1])
+    tol_y = 0.20 * max(holes[0][4] - holes[0][2], holes[1][4] - holes[1][2])
+    if _gap(holes[0][1], holes[0][3], holes[1][1], holes[1][3]) > tol_x:
+        return False
+    if _gap(holes[0][2], holes[0][4], holes[1][2], holes[1][4]) > tol_y:
+        return False
     return True
 
 
@@ -129,12 +161,29 @@ def vector_glyph_items(
         box = (ix0, iy0, ix1, iy1)
         if existing and any(_covers_existing(box, it) for it in existing):
             continue                      # ký hiệu đã có trong text layer
+        if existing and _covers_text_run(box, existing):
+            continue                      # path là cả cụm chữ vẽ bằng nét
         out.append(
             TextItem(
                 x0=ix0, y0=iy0, x1=ix1, y1=iy1, text=DIAMETER, synthetic=True
             )
         )
     return out
+
+
+def _covers_text_run(box, items: list[TextItem], min_items: int = 2) -> bool:
+    """True nếu hộp bao chứa tâm của >= min_items chữ đã biết.
+
+    Trường hợp PDF vẽ cả *cụm chữ* bằng nét (text ảo để tìm kiếm): path có hộp
+    bao trùm nhiều ký tự, không phải một ký hiệu đơn lẻ.
+    """
+    n = 0
+    for it in items:
+        if box[0] <= it.cx <= box[2] and box[1] <= it.cy <= box[3]:
+            n += 1
+            if n >= min_items:
+                return True
+    return False
 
 
 def _covers_existing(box, item: TextItem, ratio: float = 0.5) -> bool:

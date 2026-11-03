@@ -166,10 +166,12 @@ Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách x�
 * **Ký hiệu `ø` bị mất** (file xuất từ AutoCAD) — ký hiệu đường kính được **vẽ
   bằng nét vector** (một vòng elip bị gạch chéo), text layer hoàn toàn không có
   ký tự nào, nên đọc chữ không bao giờ thấy. Nay app dò thêm các *path* vector
-  cỡ một ký tự và nhận dạng hình học: ảnh render là vòng kín chia thành **đúng
-  2 lỗ** nhỏ, gần bằng nhau. Nhờ vậy ô ra `ø73(0/-0.009)` thay vì
-  `73(0/-0.009)`; nét kẻ bảng và ô checkbox (1 lỗ to, hoặc 2 lỗ không cân) bị
-  loại nên không sinh ký hiệu giả.
+  cỡ một ký tự và nhận dạng hình học: ảnh render là **một** nét liền, vòng kín
+  chia thành **đúng 2 lỗ** nhỏ, gần bằng nhau và nằm sát nhau theo cả hai trục
+  (gạch chéo chỉ là nét mảnh cắt vòng). Nhờ vậy ô ra `ø73(0/-0.009)` thay vì
+  `73(0/-0.009)`; nét kẻ bảng, ô checkbox (1 lỗ to, hoặc 2 lỗ không cân) và
+  chuỗi chữ được vẽ lại bằng nét (kiểu `300s` — hai chữ `0` cạnh nhau cũng tạo
+  2 lỗ tròn) đều bị loại nên không sinh ký hiệu giả.
 
 Vì sao không dùng thư viện nhận dạng bảng phổ biến?
 
