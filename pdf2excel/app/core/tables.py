@@ -118,10 +118,14 @@ def build_page_tables(
             row_coord.setdefault(r.r1 + 1, r.y1)
         col_px = _line_coords(col_lines, col_coord)
         row_px = _line_coords(row_lines, row_coord)
+        col_edges: list[float] = []
+        row_edges: list[float] = []
         if col_px and len(col_px) == num_cols + 1:
-            col_pt = [(col_px[i + 1] - col_px[i]) / scale for i in range(num_cols)]
+            col_edges = [v / scale for v in col_px]
+            col_pt = [col_edges[i + 1] - col_edges[i] for i in range(num_cols)]
         if row_px and len(row_px) == num_rows + 1:
-            row_pt = [(row_px[i + 1] - row_px[i]) / scale for i in range(num_rows)]
+            row_edges = [v / scale for v in row_px]
+            row_pt = [row_edges[i + 1] - row_edges[i] for i in range(num_rows)]
 
         cells: list[TableCell] = []
         for r in group:
@@ -146,6 +150,8 @@ def build_page_tables(
         cells, num_rows, num_cols, r_off, c_off = cropped
         col_pt = col_pt[c_off:c_off + num_cols]
         row_pt = row_pt[r_off:r_off + num_rows]
+        col_edges = col_edges[c_off:c_off + num_cols + 1]
+        row_edges = row_edges[r_off:r_off + num_rows + 1]
 
         x0 = min(r.x0 for r in group)
         y0 = min(r.y0 for r in group)
@@ -162,9 +168,97 @@ def build_page_tables(
                 bbox=(x0, y0, x1, y1),
                 col_widths=col_pt,
                 row_heights=row_pt,
+                col_edges=col_edges,
+                row_edges=row_edges,
             )
         )
     return tables
+
+
+def _cluster_edges(values: list[float], tol: float = 0.6) -> list[float]:
+    """Gộp các đường kẻ gần trùng nhau (sai số làm tròn) thành một mốc."""
+    out: list[float] = []
+    for v in sorted(values):
+        if out and v - out[-1] <= tol:
+            continue
+        out.append(v)
+    return out
+
+
+def _nearest(values: list[float], v: float) -> int:
+    return min(range(len(values)), key=lambda i: abs(values[i] - v))
+
+
+def merge_tables(tables: list[Table]) -> Table | None:
+    """Gộp nhiều bảng rời trên CÙNG một trang thành một bảng duy nhất.
+
+    Giữ nguyên vị trí thật: lấy hợp các đường kẻ dọc/ngang của mọi bảng làm
+    lưới chung, nên khoảng trống giữa các bảng vẫn còn (đúng như trang PDF) và
+    cả trang in ra vẫn nằm gọn trong một tờ A4.
+    """
+    usable = [
+        t for t in tables
+        if len(t.col_edges) == t.num_cols + 1
+        and len(t.row_edges) == t.num_rows + 1
+    ]
+    if not usable:
+        return None
+    if len(usable) == 1:
+        return usable[0]
+
+    xs = _cluster_edges([e for t in usable for e in t.col_edges])
+    ys = _cluster_edges([e for t in usable for e in t.row_edges])
+
+    cells: dict[tuple[int, int], TableCell] = {}
+    for t in usable:
+        for c in t.cells:
+            c1 = min(c.col + c.colspan, t.num_cols)
+            r1 = min(c.row + c.rowspan, t.num_rows)
+            r0 = _nearest(ys, t.row_edges[c.row])
+            cc0 = _nearest(xs, t.col_edges[c.col])
+            r_end = _nearest(ys, t.row_edges[r1])
+            c_end = _nearest(xs, t.col_edges[c1])
+            key = (r0, cc0)
+            old = cells.get(key)
+            if old is not None:
+                # hai bảng chồng mép nhau: ưu tiên ô có chữ
+                if old.text.strip() or not c.text.strip():
+                    continue
+            cells[key] = TableCell(
+                row=r0, col=cc0,
+                rowspan=max(1, r_end - r0),
+                colspan=max(1, c_end - cc0),
+                text=c.text, score=c.score,
+            )
+
+    # bỏ ô nằm trọn trong một ô lớn hơn (tránh merge chồng lên nhau trong Excel)
+    ordered = sorted(cells.values(), key=lambda c: c.rowspan * c.colspan, reverse=True)
+    kept: list[TableCell] = []
+    for c in ordered:
+        inside = any(
+            k.row <= c.row and k.col <= c.col
+            and k.row + k.rowspan >= c.row + c.rowspan
+            and k.col + k.colspan >= c.col + c.colspan
+            for k in kept
+        )
+        if not inside:
+            kept.append(c)
+
+    first = usable[0]
+    num_rows, num_cols = len(ys) - 1, len(xs) - 1
+    return Table(
+        page=first.page,
+        index=1,
+        num_rows=num_rows,
+        num_cols=num_cols,
+        cells=kept,
+        engine=first.engine,
+        col_widths=[xs[i + 1] - xs[i] for i in range(num_cols)],
+        row_heights=[ys[i + 1] - ys[i] for i in range(num_rows)],
+        col_edges=xs,
+        row_edges=ys,
+        page_size=first.page_size,
+    )
 
 
 def _cluster_lines(items: list[TextItem]) -> list[list[TextItem]]:

@@ -81,6 +81,7 @@ class _Entry:
     text: str
     origin: tuple[float, float] | None
     box: tuple[float, float, float, float]
+    space_before: bool = False
 
 
 def _reslice_runs(entries: list[_Entry], tol: float = 0.6) -> None:
@@ -174,12 +175,22 @@ def page_text_items(page, scale: float) -> list[TextItem]:
     tp = page.get_textpage()
     n = tp.count_chars()
     entries: list[_Entry] = []
+    pending_space = False
     for i in range(n):
         try:
             ch = tp.get_text_range(i, 1)
         except Exception:
             continue
-        if not ch or not ch.strip():
+        if not ch:
+            continue
+        # Ký tự khoảng trắng thật của PDF: không tạo item (hộp bao rỗng) nhưng
+        # ghi nhớ để đơn vị chữ kế tiếp biết phải chèn dấu cách. Nếu chỉ dựa vào
+        # khoảng hở hình học, những cặp số như "0.8 6H" (cách nhau ~2,3 pt) sẽ
+        # bị dính thành "0.86H".
+        if ch.isspace() and ch not in "\r\n\t":
+            pending_space = True
+            continue
+        if not ch.strip():
             continue
         try:
             left, bottom, right, top = tp.get_charbox(i)
@@ -206,13 +217,18 @@ def page_text_items(page, scale: float) -> list[TextItem]:
                 text=ch,
                 origin=origin,
                 box=(x0 * scale, y0 * scale, x1 * scale, y1 * scale),
+                space_before=pending_space,
             )
         )
+        pending_space = False
 
     _reslice_runs(entries)
     _drop_covered(entries)
     return [
-        TextItem(x0=e.box[0], y0=e.box[1], x1=e.box[2], y1=e.box[3], text=e.text)
+        TextItem(
+            x0=e.box[0], y0=e.box[1], x1=e.box[2], y1=e.box[3],
+            text=e.text, space_before=e.space_before,
+        )
         for e in entries
     ]
 
@@ -243,7 +259,14 @@ def _join_line(items: list[TextItem], avg_h: float) -> str:
     for it in items:
         if prev is not None:
             gap = it.x0 - prev.x1
-            if gap > 0.45 * avg_h:
+            # Dấu cách có thật trong PDF thì luôn tôn trọng (đây là cách chắc
+            # chắn nhất: "0.8 6H" cách nhau ~2,3 pt nên nếu chỉ đo khoảng hở sẽ
+            # dính thành "0.86H"). Khi PDF không có ký tự cách, dùng khoảng hở
+            # làm phương án dự phòng — ngưỡng 0,45 em vì hộp bao của ký tự hẹp
+            # như "1" cũng để lại khoảng trống khá lớn.
+            # Ký hiệu tự dựng (ø) không nằm trong text layer nên pdfium tưởng
+            # là chỗ ngắt từ và chèn dấu cách — bỏ qua cờ đó.
+            if (it.space_before and not prev.synthetic) or gap > 0.45 * avg_h:
                 a, b = prev.text[-1:], it.text[:1]
                 tight = a in _TIGHT or b in _TIGHT
                 if not (tight or is_cjk(a) or is_cjk(b)):

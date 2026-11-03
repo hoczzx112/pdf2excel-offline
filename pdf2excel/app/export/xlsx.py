@@ -13,7 +13,8 @@ from openpyxl.worksheet.page import PageMargins
 from openpyxl.worksheet.worksheet import Worksheet
 
 from ..config import OCR_WARN_SCORE
-from ..core.models import DocResult, Table
+from ..core.models import DocResult, Table, TableCell
+from ..core.tables import merge_tables
 from ..core.textlayer import is_cjk
 
 # Ký tự không hợp lệ với XML: C0 control (trừ \t \n), C1, surrogate lẻ,
@@ -46,8 +47,7 @@ _MAX_ROW_HEIGHT = 409.0
 
 # --- bố cục in: mỗi sheet = 1 trang A4 -------------------------------
 _A4_W_PT, _A4_H_PT = 595.28, 841.89       # A4 ở 72 dpi (point)
-_MARGIN_LR_IN = 0.30                       # lề trái/phải (inch)
-_MARGIN_TB_IN = 0.30                       # lề trên/dưới (inch)
+_MARGIN_IN = 0.3                           # lề dự phòng khi thiếu toạ độ PDF
 
 # Calibri 11 (font mặc định của workbook): 1 "ký tự" rộng 7 px ở 96 dpi,
 # mỗi cột cộng thêm 5 px lề trong; 1 px = 0,75 pt.
@@ -105,8 +105,8 @@ def _display_width(s: str) -> int:
     return w
 
 
-def _sheet_title(table: Table, used: set[str]) -> str:
-    base = f"T{table.page}-B{table.index}"
+def _sheet_title(table: Table, used: set[str], base: str | None = None) -> str:
+    base = base or f"T{table.page}-B{table.index}"
     title = base
     n = 2
     while title in used:
@@ -114,6 +114,30 @@ def _sheet_title(table: Table, used: set[str]) -> str:
         n += 1
     used.add(title)
     return title[:31]
+
+
+def _apply_overrides(table: Table, overrides: dict[str, str]) -> Table:
+    """Bản sao của bảng với các ô đã được người dùng sửa trên web."""
+    if not overrides:
+        return table
+    cells: list[TableCell] = []
+    for c in table.cells:
+        text = overrides.get(f"{c.row},{c.col}", c.text)
+        cells.append(
+            TableCell(
+                row=c.row, col=c.col,
+                rowspan=c.rowspan, colspan=c.colspan,
+                text=text, score=c.score,
+            )
+        )
+    return Table(
+        page=table.page, index=table.index,
+        num_rows=table.num_rows, num_cols=table.num_cols,
+        cells=cells, engine=table.engine, bbox=table.bbox,
+        col_widths=table.col_widths, row_heights=table.row_heights,
+        col_edges=table.col_edges, row_edges=table.row_edges,
+        page_size=table.page_size,
+    )
 
 
 def _write_table(ws: Worksheet, table: Table, overrides: dict[str, str]) -> None:
@@ -143,15 +167,20 @@ def _write_table(ws: Worksheet, table: Table, overrides: dict[str, str]) -> None
             cell.fill = _WARN_FILL
             cell.comment = Comment(f"Độ tin cậy OCR thấp: {score:.2f}", "pdf2excel")
 
+    # Chỉ tô tiêu đề / kẻ viền cho ô CÓ THẬT. Với trang gộp nhiều bảng, phần
+    # trống giữa các bảng sẽ không bị kẻ thành lưới rối.
     if table.num_rows >= 1:
-        for c in range(table.num_cols):
+        for (r, c) in spans:
+            if r != 0:
+                continue
             cell = ws.cell(row=1, column=c + 1)
             cell.font = _HEAD_FONT
             cell.fill = _HEAD_FILL
 
-    for r in range(table.num_rows):
-        for c in range(table.num_cols):
-            ws.cell(row=r + 1, column=c + 1).border = _BORDER
+    for (r, c), (rs, cs) in spans.items():
+        for rr in range(r, min(table.num_rows, r + rs)):
+            for cc in range(c, min(table.num_cols, c + cs)):
+                ws.cell(row=rr + 1, column=cc + 1).border = _BORDER
 
     for (r, c), (rs, cs) in spans.items():
         if rs > 1 or cs > 1:
@@ -226,24 +255,12 @@ def _chars_to_pt(chars: float) -> float:
 def _setup_print(ws: Worksheet, table: Table, col_width: list[float]) -> None:
     """Đặt trang in = đúng 1 trang A4, cùng chiều với trang PDF.
 
-    Nếu bảng (theo kích thước thật) vừa khít vùng in thì giữ 100%; nếu lớn hơn
-    một chút do lề/padding của Excel thì bật "Fit to 1 page" để không tràn sang
-    trang thứ hai.
+    Lề trên/dưới/trái/phải lấy theo đúng vị trí bảng trên trang PDF, nên bảng
+    in ra nằm đúng chỗ như bản gốc. Sim "Fit to 1 page" luôn bật để chắc chắn
+    mỗi sheet chỉ chiếm một trang (Excel chỉ thu nhỏ, không phóng to, nên bảng
+    nhỏ vẫn in ở 100%).
     """
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    ws.page_margins = PageMargins(
-        left=_MARGIN_LR_IN,
-        right=_MARGIN_LR_IN,
-        top=_MARGIN_TB_IN,
-        bottom=_MARGIN_TB_IN,
-        header=0.0,
-        footer=0.0,
-    )
-    ws.print_options.horizontalCentered = True
-    ws.sheet_view.showGridLines = False
-    ws.print_area = (
-        f"A1:{get_column_letter(table.num_cols)}{table.num_rows}"
-    )
 
     total_w = sum(_chars_to_pt(w) for w in col_width)
     total_h = sum(
@@ -257,16 +274,51 @@ def _setup_print(ws: Worksheet, table: Table, col_width: list[float]) -> None:
 
     paper_w = _A4_H_PT if landscape else _A4_W_PT
     paper_h = _A4_W_PT if landscape else _A4_H_PT
-    avail_w = paper_w - 2 * _MARGIN_LR_IN * 72
-    avail_h = paper_h - 2 * _MARGIN_TB_IN * 72
+
+    left = top = right = bottom = _MARGIN_IN
+    if (
+        page_w
+        and page_h
+        and len(table.col_edges) == table.num_cols + 1
+        and len(table.row_edges) == table.num_rows + 1
+    ):
+        # bảng bắt đầu/kết thúc ở đâu trên trang PDF -> lề tương ứng (inch)
+        k = min(paper_w / page_w, paper_h / page_h)
+        left = max(0.0, table.col_edges[0]) * k / 72
+        top = max(0.0, table.row_edges[0]) * k / 72
+        right = max(0.0, page_w - table.col_edges[-1]) * k / 72
+        bottom = max(0.0, page_h - table.row_edges[-1]) * k / 72
+        # chừa tối thiểu 0,12" cho lề và luôn còn ít nhất 0,6" cho vùng in
+        left, right = max(0.12, left), max(0.12, right)
+        top, bottom = max(0.12, top), max(0.12, bottom)
+        span_w = paper_w / 72 - 0.6
+        if left + right > span_w:
+            s = span_w / (left + right)
+            left, right = left * s, right * s
+        span_h = paper_h / 72 - 0.6
+        if top + bottom > span_h:
+            s = span_h / (top + bottom)
+            top, bottom = top * s, bottom * s
+
+    ws.page_margins = PageMargins(
+        left=round(left, 3),
+        right=round(right, 3),
+        top=round(top, 3),
+        bottom=round(bottom, 3),
+        header=0.0,
+        footer=0.0,
+    )
+    # lề đã đặt đúng vị trí gốc nên không canh giữa nữa (canh giữa sẽ lệch)
+    ws.print_options.horizontalCentered = False
+    ws.sheet_view.showGridLines = False
+    ws.print_area = f"A1:{get_column_letter(table.num_cols)}{table.num_rows}"
 
     if not total_w or not total_h:
         return
-    scale = min(avail_w / total_w, avail_h / total_h)
-    if scale < 0.995:
-        ws.page_setup.fitToPage = True
-        ws.page_setup.fitToWidth = 1
-        ws.page_setup.fitToHeight = 1
+    # luôn bật: mỗi sheet = đúng 1 trang A4, không bao giờ tràn sang trang 2
+    ws.page_setup.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
 
 
 def build_workbook(
@@ -274,23 +326,47 @@ def build_workbook(
     include: set[str] | None = None,
     edits: dict[str, dict[str, str]] | None = None,
 ) -> Workbook:
-    """Chỉ ghi các sheet bảng. Không tạo sheet phụ (_Thông tin / _Văn bản gốc)."""
+    """Chỉ ghi các sheet bảng. Không tạo sheet phụ (_Thông tin / _Văn bản gốc).
+
+    Mỗi trang PDF là một sheet: các bảng rời trên cùng một trang được gộp lại
+    (giữ nguyên vị trí) để mở lên/in ra vẫn đúng như trang gốc.
+    """
     wb = Workbook()
     default = wb.active
     default.title = "Kết quả"
+    edits = edits or {}
 
-    used: set[str] = set()
-    first = True
+    groups: list[list[Table]] = []
     for table in result.tables:
         if include is not None and table.id not in include:
             continue
+        if groups and groups[-1][0].page == table.page:
+            groups[-1].append(table)
+        else:
+            groups.append([table])
+
+    used: set[str] = set()
+    first = True
+
+    def _emit(table: Table, title: str | None) -> None:
+        nonlocal first
         if first:
             ws = default
-            ws.title = _sheet_title(table, used)
+            ws.title = _sheet_title(table, used, title)
             first = False
         else:
-            ws = wb.create_sheet(_sheet_title(table, used))
-        _write_table(ws, table, (edits or {}).get(table.id, {}))
+            ws = wb.create_sheet(_sheet_title(table, used, title))
+        _write_table(ws, table, {})
+
+    for group in groups:
+        prepared = [_apply_overrides(t, edits.get(t.id, {})) for t in group]
+        if len(prepared) > 1:
+            merged = merge_tables(prepared)
+            if merged is not None:
+                _emit(merged, f"T{group[0].page}")
+                continue
+        for t in prepared:
+            _emit(t, None)
 
     if first:
         # không có bảng nào: giữ một sheet trống để file Excel vẫn hợp lệ

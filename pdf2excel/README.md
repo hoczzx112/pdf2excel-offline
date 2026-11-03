@@ -1,8 +1,9 @@
 # PDF → Excel (chạy tại máy, không gửi file lên mạng)
 
 Web app nội bộ chuyển **bảng trong PDF** thành **Excel (.xlsx)**. Hỗ trợ cả PDF
-có text layer và PDF scan (OCR). Mỗi bảng trong PDF trở thành một sheet riêng,
-giữ ô gộp (merged cells) và xuống dòng trong ô.
+có text layer và PDF scan (OCR). Mỗi trang PDF trở thành một sheet (mọi bảng
+rời trên trang được gộp lại, giữ đúng vị trí), giữ ô gộp (merged cells) và
+xuống dòng trong ô.
 
 > Toàn bộ xử lý diễn ra trên máy này. Server chỉ lắng nghe `127.0.0.1`, không
 > có dữ liệu nào rời khỏi máy.
@@ -79,7 +80,10 @@ Dừng: nhấn `Ctrl+C` trong cửa sổ lệnh.
 
 | Sheet | Nội dung |
 |---|---|
-| `T{trang}-B{thứ tự}` | Mỗi bảng một sheet, giữ ô gộp, viền mảnh, dòng đầu in đậm + nền xám |
+| `T{trang}` | Trang PDF có nhiều bảng rời: gộp tất cả vào **một** sheet, giữ đúng vị trí |
+| `T{trang}-B{thứ tự}` | Trang chỉ có một bảng: mỗi bảng một sheet |
+
+Mọi sheet đều giữ ô gộp, viền mảnh, dòng đầu in đậm + nền xám.
 
 File chỉ có đúng các sheet bảng — không còn sheet phụ `_Thông tin` /
 `_Văn bản gốc` như bản trước. Nếu không có bảng nào được chọn thì file vẫn có
@@ -96,13 +100,17 @@ khi cần, ví dụ `R-TNCRB057` + `08406C.02` → `R-TNCRB057 08406C.02`), rồ
 Excel tự xuống dòng theo độ rộng cột. Chiều cao dòng được ước lượng sẵn để ô
 gộp (Excel không tự giãn ô gộp) vẫn hiện đủ chữ.
 
+Dấu cách **có thật** trong text layer của PDF được giữ nguyên, nên các cụm như
+`6-M5×0.8 6H` không còn bị dính thành `6-M5×0.86H` (khoảng hở giữa `0.8` và
+`6H` chỉ ~2,3 pt, nhỏ hơn nhiều so với một dấu cách bình thường).
+
 Mỗi sheet còn được **đặt sẵn chế độ in**: khổ **A4**, đúng chiều của trang PDF
-(dọc/ngang), lề 0,3 inch, canh giữa theo chiều ngang, ẩn lưới và đặt vùng in
-đúng phạm vi bảng. Độ rộng cột và chiều cao hàng lấy theo **kích thước thật
-của đường kẻ trong PDF**, nên mở *Print Preview* là thấy bảng nằm gọn trong
-đúng 1 trang A4, gần như không phải chỉnh gì thêm. Bảng nhỏ hơn trang được giữ
-nguyên 100%; bảng lớn hơn một chút thì app tự bật **Fit to 1 page** để không
-tràn sang trang thứ hai.
+(dọc/ngang), ẩn lưới và đặt vùng in đúng phạm vi bảng. Độ rộng cột và chiều cao
+hàng lấy theo **kích thước thật của đường kẻ trong PDF**, còn lề trên/dưới/
+trái/phải lấy theo **đúng vị trí bảng trên trang PDF** — nên *Print Preview*
+cho ra bố cục y như bản gốc. Chế độ **Fit to 1 page** luôn được bật (Excel chỉ
+thu nhỏ, không phóng to), vì vậy mỗi sheet chắc chắn in ra đúng **một** trang
+A4, không bao giờ tràn sang trang thứ hai.
 
 ## 6. Cách hoạt động (tóm tắt)
 
@@ -197,9 +205,9 @@ xử lý ô gộp một cách tự nhiên (ô gộp = một vùng trắng lớn 
   cột đó có thể không thành ô — nội dung ảnh không nằm trong file Excel.
 * **Bảng lồng trong bảng** hoặc bảng nhiều tầng header rất phức tạp: nên thử
   engine "sâu", hoặc sửa tay trên web trước khi tải.
-* **Một trang PDF có nhiều bảng rời**: mỗi bảng vẫn là một sheet riêng
-  (`T2-B1`, `T2-B2`, …) và mỗi sheet đều được đặt in vừa 1 trang A4. Bảng đặt
-  cạnh nhau trên cùng trang PDF sẽ không được ghép vào chung một sheet.
+* **Một trang PDF có nhiều bảng rời**: tất cả được gộp vào **một sheet**
+  (`T2`) và giữ nguyên vị trí như trang gốc, nên in ra vẫn đúng bố cục và vẫn
+  gọn trong 1 trang A4. Trang chỉ có một bảng thì tên sheet là `T2-B1`.
 * **Scan nghiêng**: tự phát hiện và xoay thẳng khi góc ≥ 0,25°.
 * **Ảnh scan mờ/nhiễu**: chữ Hán có thể sai; ô vàng là gợi ý cần soát.
 * **Giới hạn mặc định**: 60 trang/file, 100 MB/file, 20 file/lần — đổi bằng
@@ -258,7 +266,8 @@ Python, không cần reportlab). Có thể chạy bằng `pytest tests/ -q`.
 | OCR chậm (~13 s/trang) | Chưa có `onnxruntime` → `python -m pip install onnxruntime` |
 | Lần đầu OCR bị chậm | Lần đầu nạp model (~5 s); các trang sau nhanh hơn |
 | Trang bị nhận nhầm là scan/text | Đổi chip `text`/`scan` cho đúng trang rồi chuyển đổi lại |
-| Bảng bị tách thành nhiều sheet | Các bảng thật sự rời nhau; gộp lại bằng tay trong Excel nếu cần |
+| Bảng bị tách thành nhiều sheet | Chỉ xảy ra khi các bảng nằm ở **trang khác nhau** (mỗi trang một sheet) hoặc khi bạn bỏ chọn bớt bảng trên web |
+| Trang in bị tràn sang trang 2 | App đã bật sẵn *Fit to 1 page*; nếu bạn tự đổi khổ giấy/lề trong Excel thì bật lại *Page Setup → Fit to: 1 page wide by 1 tall* |
 | Bảng thiếu chữ | Thử engine "sâu" hoặc sửa trực tiếp trên web rồi tải lại |
 | Excel báo lỗi khi mở | Kiểm tra đã tải xong (file > 4 KB); tải lại từ nút **Tải Excel** |
 | Cả bảng thành rác, chữ nằm sai ô (file có `/Rotate 90`) | Đã sửa: hộp bao ký tự của pdfium nằm ở hệ toạ độ **chưa xoay**, nay app xoay theo `/Rotate` của trang. Nếu vẫn lỗi, gửi lại file. |

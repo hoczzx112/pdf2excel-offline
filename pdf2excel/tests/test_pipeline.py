@@ -232,12 +232,15 @@ def test_sheet_prints_as_one_a4_page() -> None:
     assert ws.page_setup.orientation == "landscape"   # trang gốc /Rotate 90
     assert str(ws.print_area).endswith("$C$3"), ws.print_area
     assert ws.sheet_view.showGridLines is False
-    assert ws.page_margins.left is not None
-    # bảng nhỏ nằm gọn trong trang -> giữ 100%, không cần "fit to page"
+    # lề lấy theo đúng vị trí bảng trên trang PDF (bảng cách mép trái 60 pt)
+    assert abs(ws.page_margins.left - 60 / 72) < 0.02, ws.page_margins.left
+    assert abs(ws.page_margins.top - 80 / 72) < 0.02, ws.page_margins.top
+    # luôn bật "Fit to 1 page" để chắc chắn mỗi sheet chỉ in ra 1 trang
     props = ws.sheet_properties.pageSetUpPr
-    assert not (props and props.fitToPage)
+    assert props is not None and props.fitToPage is True
+    assert (ws.page_setup.fitToWidth, ws.page_setup.fitToHeight) == (1, 1)
 
-    # bảng cao hơn A4 -> bật "Fit to 1 page" để không tràn sang trang 2
+    # bảng cao hơn A4 cũng chỉ chiếm 1 trang nhờ fit-to-page
     tall = tuple((f"A{i}", "Bolt M6", "10") for i in range(45))
     res2 = convert(
         build_table_pdf(tmp / "tall.pdf", rows=tall, page=(1500, 1500))
@@ -284,6 +287,49 @@ def test_vector_diameter_symbol_is_recovered() -> None:
     # không sinh ký hiệu ø giả ở các ô khác
     assert grid[0] == ["Code", "Name", "Qty"]
     assert grid[2] == ["A2", "Nut M6", "20"]
+
+
+def test_space_between_number_and_thread_class() -> None:
+    """Giữ dấu cách thật của PDF: "6-M5×0.8 6H", không dính thành "0.86H".
+
+    Khoảng hở giữa "0.8" và "6H" chỉ ~2,3 pt (≈ 0,25 em) nên nếu chỉ đo khoảng
+    hở hình học thì bị coi là cùng một từ; text layer có ký tự cách nên phải
+    dùng đúng ký tự đó.
+    """
+    tmp = _tmpdir()
+    pdf = build_table_pdf(
+        tmp / "space.pdf",
+        rows=(("6-M5\u00d70.8 6H", "Bolt M6", "10"),),
+    )
+    res = convert(pdf)
+    grid = res.tables[0].grid()
+    assert grid[1][0] == "6-M5\u00d70.8 6H", grid[1]
+    # không thêm dấu cách lung tung trong từ
+    assert grid[0] == ["Code", "Name", "Qty"], grid[0]
+
+
+def test_tables_on_same_page_merged_into_one_sheet() -> None:
+    """Nhiều bảng rời trên cùng một trang -> gộp vào MỘT sheet, giữ vị trí."""
+    from openpyxl import load_workbook
+
+    tmp = _tmpdir()
+    pdf = build_table_pdf(tmp / "two_tables.pdf", second_y=400)
+    res = convert(pdf)
+    assert len(res.tables) == 2, [t.id for t in res.tables]   # vẫn tách ở tầng dữ liệu
+
+    out = save_workbook(res, tmp / "two_tables.xlsx")
+    wb = load_workbook(out)
+    assert wb.sheetnames == ["T1"], wb.sheetnames
+
+    ws = wb["T1"]
+    values = [c.value for row in ws.iter_rows() for c in row if c.value]
+    assert "Bolt M6" in values and "Sub" in values, values
+    # vùng in phủ cả hai bảng (bảng 1 ở trên, bảng 2 ở dưới)
+    assert ws.max_row >= 6, ws.max_row
+    assert str(ws.print_area).endswith(f"${ws.max_row}"), ws.print_area
+    assert str(ws.print_area).startswith("'T1'!$A$1:"), ws.print_area
+    props = ws.sheet_properties.pageSetUpPr
+    assert props is not None and props.fitToPage is True
 
 
 def test_soft_join_removes_hard_line_breaks() -> None:

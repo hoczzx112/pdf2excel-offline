@@ -129,7 +129,11 @@ def vector_glyph_items(
         box = (ix0, iy0, ix1, iy1)
         if existing and any(_covers_existing(box, it) for it in existing):
             continue                      # ký hiệu đã có trong text layer
-        out.append(TextItem(x0=ix0, y0=iy0, x1=ix1, y1=iy1, text=DIAMETER))
+        out.append(
+            TextItem(
+                x0=ix0, y0=iy0, x1=ix1, y1=iy1, text=DIAMETER, synthetic=True
+            )
+        )
     return out
 
 

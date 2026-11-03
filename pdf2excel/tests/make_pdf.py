@@ -72,12 +72,15 @@ def build_table_pdf(
     rotate: int = 0,
     page_count: int = 1,
     diameter: bool = False,
+    second_y: float | None = None,
 ) -> Path:
     """Một hoặc nhiều trang A4, mỗi trang có 1 bảng kẻ 3 cột.
 
     rotate: ghi /Rotate vào trang (90 = trang nằm ngang nhưng lưu dạng dọc).
     page_count: số trang, nội dung giống nhau.
     diameter: vẽ thêm ký hiệu ø bằng nét vector trước giá trị Qty hàng 1.
+    second_y: nếu có, vẽ thêm một bảng nhỏ 2 cột ở vị trí này (cùng trang) để
+        kiểm tra việc gộp nhiều bảng rời vào chung một sheet.
     """
     disp_w, disp_h = (page[1], page[0]) if rotate in (90, 270) else (page[0], page[1])
 
@@ -123,8 +126,26 @@ def build_table_pdf(
                 ops.append(_text(x_cell + 5, y_text, row[i], rotate, page[1]))
             x_cell += w
 
-    content = "\n".join(ops).encode("latin-1")
+    # bảng thứ hai (rời hẳn bảng thứ nhất) để test gộp bảng cùng trang
+    if second_y is not None:
+        sw = [90.0, 90.0]
+        sy = float(second_y)
+        ops.append(_line(x0, sy, x0 + sum(sw), sy, rotate, page[1]))
+        ops.append(_line(x0, sy + 2 * row_h, x0 + sum(sw), sy + 2 * row_h,
+                         rotate, page[1]))
+        ops.append(_line(x0, sy + row_h, x0 + sum(sw), sy + row_h,
+                         rotate, page[1]))
+        x = x0
+        ops.append(_line(x0, sy, x0, sy + 2 * row_h, rotate, page[1]))
+        for w in sw:
+            x += w
+            ops.append(_line(x, sy, x, sy + 2 * row_h, rotate, page[1]))
+        ops.append(_text(x0 + 5, sy + row_h - 7, "Sub", rotate, page[1]))
+        ops.append(_text(x0 + sw[0] + 5, sy + row_h - 7, "Total", rotate, page[1]))
+        ops.append(_text(x0 + 5, sy + 2 * row_h - 7, "S1", rotate, page[1]))
+        ops.append(_text(x0 + sw[0] + 5, sy + 2 * row_h - 7, "7", rotate, page[1]))
 
+    content = "\n".join(ops).encode("latin-1")
     n = max(1, page_count)
     font_id = 3 + 2 * n                    # 1 catalog, 2 pages, rồi (page, content) * n
     rot = f" /Rotate {int(rotate)}" if rotate else ""

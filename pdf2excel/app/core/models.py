@@ -18,6 +18,12 @@ class TextItem:
     y1: float
     text: str
     score: float | None = None
+    # PDF có ký tự khoảng trắng ngay trước đơn vị này (text layer giữ nguyên
+    # dấu cách của bản gốc; OCR thì không có, dựa vào khoảng hở hình học).
+    space_before: bool = False
+    # Ký hiệu do app tự dựng lại từ nét vẽ (ví dụ "ø"), không có trong text
+    # layer: không chèn dấu cách giữa nó và chữ liền sau.
+    synthetic: bool = False
 
     @property
     def cx(self) -> float:
@@ -70,6 +76,9 @@ class Table:
     # kích thước thật của từng cột/hàng, đơn vị point (lấy từ đường kẻ PDF)
     col_widths: list[float] = field(default_factory=list)
     row_heights: list[float] = field(default_factory=list)
+    # toạ độ tuyệt đối của các đường kẻ trên trang, đơn vị point (len = số cột + 1)
+    col_edges: list[float] = field(default_factory=list)
+    row_edges: list[float] = field(default_factory=list)
     # kích thước trang PDF (point, đã tính /Rotate) để chọn chiều giấy khi in
     page_size: tuple[float, float] | None = None
 
