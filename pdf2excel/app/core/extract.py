@@ -40,12 +40,20 @@ def _emit(cb: Event, **data) -> None:
 
 
 def _page_tables(
-    img: np.ndarray, items: list[TextItem], page_no: int, engine: str
+    img: np.ndarray,
+    items: list[TextItem],
+    page_no: int,
+    engine: str,
+    scale: float = 1.0,
 ) -> tuple[list[Table], list[str]]:
     warnings: list[str] = []
     binary = to_binary(img)
     rects = page_cell_rects(binary, items, remove_text=(engine == "text"))
-    tables = build_page_tables(rects, items, page_no, engine, img.shape[0]) if rects else []
+    tables = (
+        build_page_tables(rects, items, page_no, engine, img.shape[0], scale)
+        if rects
+        else []
+    )
     if not tables:
         tables = whitespace_tables(items, page_no, engine)
         if tables:
@@ -175,7 +183,10 @@ def convert(
                 used = "text"
 
             t = time.time()
-            tables, w2 = _page_tables(img, items, page_no, used)
+            tables, w2 = _page_tables(img, items, page_no, used, scale)
+            page_size = page.get_size()
+            for tb in tables:
+                tb.page_size = (float(page_size[0]), float(page_size[1]))
             t_grid = time.time() - t
             warnings.extend(w2)
 

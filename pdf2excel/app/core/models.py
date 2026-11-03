@@ -67,6 +67,11 @@ class Table:
     cells: list[TableCell] = field(default_factory=list)
     engine: str = ""
     bbox: tuple[float, float, float, float] | None = None
+    # kích thước thật của từng cột/hàng, đơn vị point (lấy từ đường kẻ PDF)
+    col_widths: list[float] = field(default_factory=list)
+    row_heights: list[float] = field(default_factory=list)
+    # kích thước trang PDF (point, đã tính /Rotate) để chọn chiều giấy khi in
+    page_size: tuple[float, float] | None = None
 
     @property
     def id(self) -> str:

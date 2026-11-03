@@ -209,6 +209,46 @@ def test_workbook_structure() -> None:
     assert ws.max_row == 3 and ws.max_column == 3
 
 
+def test_sheet_prints_as_one_a4_page() -> None:
+    """Mỗi sheet phải sẵn sàng in: A4, đúng chiều trang PDF, vừa 1 trang."""
+    from openpyxl import load_workbook
+
+    tmp = _tmpdir()
+    pdf = build_table_pdf(tmp / "a4.pdf", rotate=90, page=(595, 842))
+    res = convert(pdf)
+    table = res.tables[0]
+
+    # kích thước cột/hàng lấy từ đường kẻ thật của PDF (đơn vị point)
+    assert len(table.col_widths) == table.num_cols, table.col_widths
+    assert len(table.row_heights) == table.num_rows, table.row_heights
+    x0, y0, x1, y1 = table.bbox
+    assert abs(sum(table.col_widths) - (x1 - x0) * 72 / 200) < 2.0
+    assert abs(sum(table.row_heights) - (y1 - y0) * 72 / 200) < 2.0
+
+    out = save_workbook(res, tmp / "a4.xlsx")
+    ws = load_workbook(out)["T1-B1"]
+
+    assert str(ws.page_setup.paperSize) == str(ws.PAPERSIZE_A4)
+    assert ws.page_setup.orientation == "landscape"   # trang gốc /Rotate 90
+    assert str(ws.print_area).endswith("$C$3"), ws.print_area
+    assert ws.sheet_view.showGridLines is False
+    assert ws.page_margins.left is not None
+    # bảng nhỏ nằm gọn trong trang -> giữ 100%, không cần "fit to page"
+    props = ws.sheet_properties.pageSetUpPr
+    assert not (props and props.fitToPage)
+
+    # bảng cao hơn A4 -> bật "Fit to 1 page" để không tràn sang trang 2
+    tall = tuple((f"A{i}", "Bolt M6", "10") for i in range(45))
+    res2 = convert(
+        build_table_pdf(tmp / "tall.pdf", rows=tall, page=(1500, 1500))
+    )
+    out2 = save_workbook(res2, tmp / "tall.xlsx")
+    ws2 = load_workbook(out2)["T1-B1"]
+    props2 = ws2.sheet_properties.pageSetUpPr
+    assert props2 is not None and props2.fitToPage is True
+    assert (ws2.page_setup.fitToWidth, ws2.page_setup.fitToHeight) == (1, 1)
+
+
 def test_empty_cells_are_blank_not_empty_string() -> None:
     """Ô không có chữ phải là ô TRỐNG thật, không phải chuỗi rỗng.
 

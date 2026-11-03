@@ -9,6 +9,7 @@ from openpyxl import Workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.page import PageMargins
 from openpyxl.worksheet.worksheet import Worksheet
 
 from ..config import OCR_WARN_SCORE
@@ -27,13 +28,32 @@ _THIN = Side(style="thin", color="B0B0B0")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _HEAD_FILL = PatternFill("solid", fgColor="E8EEF7")
 _WARN_FILL = PatternFill("solid", fgColor="FFF2CC")
-_HEAD_FONT = Font(bold=True)
+
+# Cỡ chữ chọn theo khổ giấy: form A4 của PDF thường dùng ~9 pt cho cả tiêu đề
+# lẫn nội dung, nên 9 pt giữ được đúng bố cục mà không phải thu nhỏ khi in.
+_FONT_PT = 9.0
+_HEAD_FONT = Font(bold=True, size=_FONT_PT)
+_BODY_FONT = Font(size=_FONT_PT)
+_LINE_PT = 12.0          # chiều cao một dòng ở cỡ 9 pt
+_CELL_PAD_PT = 3.0
+# _display_width() đếm theo "ký tự" của font mặc định 11 pt; đổi sang 9 pt.
+_WIDTH_FACTOR = _FONT_PT / 11.0
 
 _MAX_COL_WIDTH = 60
 _MIN_COL_WIDTH = 8
-_MIN_ROW_HEIGHT = 18.0
-_MAX_ROW_HEIGHT = 240.0
-_ROW_UNIT = 15.0
+_MIN_ROW_HEIGHT = 4.0
+_MAX_ROW_HEIGHT = 409.0
+
+# --- bố cục in: mỗi sheet = 1 trang A4 -------------------------------
+_A4_W_PT, _A4_H_PT = 595.28, 841.89       # A4 ở 72 dpi (point)
+_MARGIN_LR_IN = 0.30                       # lề trái/phải (inch)
+_MARGIN_TB_IN = 0.30                       # lề trên/dưới (inch)
+
+# Calibri 11 (font mặc định của workbook): 1 "ký tự" rộng 7 px ở 96 dpi,
+# mỗi cột cộng thêm 5 px lề trong; 1 px = 0,75 pt.
+_CHAR_PX = 7.0
+_COL_PAD_PX = 5.0
+_PX_TO_PT = 0.75
 
 
 def _clean(text: str) -> str:
@@ -114,6 +134,7 @@ def _write_table(ws: Worksheet, table: Table, overrides: dict[str, str]) -> None
         cell = ws.cell(row=r + 1, column=c + 1)
         raw = grid[r][c] if r < len(grid) and c < len(grid[r]) else ""
         _set_text(cell, _soft_join(str(raw)))
+        cell.font = _BODY_FONT
         cell.alignment = Alignment(
             wrap_text=True, vertical="center", horizontal="left"
         )
@@ -139,37 +160,113 @@ def _write_table(ws: Worksheet, table: Table, overrides: dict[str, str]) -> None
                 end_row=r + rs, end_column=c + cs,
             )
 
-    # độ rộng cột: lấy theo dòng dài nhất của bản gốc (trước khi nối), chia đều
-    # cho số cột mà ô gộp chiếm giữ.
-    col_width = [_MIN_COL_WIDTH] * table.num_cols
-    for (r, cc), (rs, cs) in spans.items():
-        val = grid[r][cc] if r < len(grid) and cc < len(grid[r]) else ""
-        longest = max((_display_width(x) for x in str(val).split("\n")), default=0)
-        share = int(longest / max(1, cs)) + 3
-        for k in range(cc, min(table.num_cols, cc + cs)):
-            col_width[k] = max(col_width[k], min(_MAX_COL_WIDTH, share))
+    # --- độ rộng cột -------------------------------------------------
+    # Ưu tiên kích thước THẬT của bản PDF (lấy từ đường kẻ): nhờ vậy bảng in ra
+    # có tỉ lệ giống bản gốc, không bị cột rộng/nhỏ tuỳ theo độ dài chữ.
+    geom_cols = (
+        table.col_widths if len(table.col_widths) == table.num_cols else None
+    )
+    if geom_cols:
+        col_width = [_pt_to_chars(pt) for pt in geom_cols]
+    else:
+        col_width = [_MIN_COL_WIDTH] * table.num_cols
+        for (r, cc), (rs, cs) in spans.items():
+            val = grid[r][cc] if r < len(grid) and cc < len(grid[r]) else ""
+            longest = max(
+                (_display_width(x) for x in str(val).split("\n")), default=0
+            )
+            share = int(longest / max(1, cs)) + 3
+            for k in range(cc, min(table.num_cols, cc + cs)):
+                col_width[k] = max(col_width[k], min(_MAX_COL_WIDTH, share))
     for c in range(table.num_cols):
         ws.column_dimensions[get_column_letter(c + 1)].width = col_width[c]
 
-    # chiều cao dòng: ước lượng số dòng cần khi chữ tự xuống dòng theo độ rộng
-    # cột đã đặt. Ô gộp nhiều hàng thì chia đều cho các hàng đó.
+    # --- chiều cao dòng -----------------------------------------------
+    # Lấy chiều cao thật, nhưng vẫn nới thêm nếu chữ tự xuống dòng cần nhiều
+    # dòng hơn (tránh bị Excel cắt chữ khi in). Ô gộp nhiều hàng chia đều.
+    geom_rows = (
+        table.row_heights if len(table.row_heights) == table.num_rows else None
+    )
     for r in range(table.num_rows):
         need = 1.0
+        has_text = False
         for (rr, cc), (rs, cs) in spans.items():
             if rr != r:
                 continue
             val = grid[r][cc] if r < len(grid) and cc < len(grid[r]) else ""
             text = _soft_join(str(val))
-            avail = max(2.0, sum(col_width[cc:cc + cs]) - 1.5)
-            lines = max(1, math.ceil(_display_width(text) / avail))
+            if text.strip():
+                has_text = True
+            avail = max(2.0, sum(col_width[cc:cc + cs]) - 0.4)
+            lines = max(1, math.ceil(_display_width(text) * _WIDTH_FACTOR / avail))
             if scores.get((rr, cc)) is not None and (scores[(rr, cc)] or 1) < OCR_WARN_SCORE:
                 lines += 1
             need = max(need, lines / max(1, rs))
+        height = math.ceil(need) * _LINE_PT + _CELL_PAD_PT if has_text else 0.0
+        if geom_rows:
+            height = max(height, geom_rows[r])
         ws.row_dimensions[r + 1].height = max(
-            _MIN_ROW_HEIGHT, min(_MAX_ROW_HEIGHT, _ROW_UNIT * math.ceil(need) + 5)
+            _MIN_ROW_HEIGHT, min(_MAX_ROW_HEIGHT, height)
         )
 
     ws.freeze_panes = "A2"
+    _setup_print(ws, table, col_width)
+
+
+def _pt_to_chars(pt: float) -> float:
+    """Bề rộng vật lý (pt) -> độ rộng cột Excel (đơn vị ký tự)."""
+    chars = (pt / _PX_TO_PT - _COL_PAD_PX) / _CHAR_PX
+    return max(1.0, min(200.0, chars))
+
+
+def _chars_to_pt(chars: float) -> float:
+    return (chars * _CHAR_PX + _COL_PAD_PX) * _PX_TO_PT
+
+
+def _setup_print(ws: Worksheet, table: Table, col_width: list[float]) -> None:
+    """Đặt trang in = đúng 1 trang A4, cùng chiều với trang PDF.
+
+    Nếu bảng (theo kích thước thật) vừa khít vùng in thì giữ 100%; nếu lớn hơn
+    một chút do lề/padding của Excel thì bật "Fit to 1 page" để không tràn sang
+    trang thứ hai.
+    """
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_margins = PageMargins(
+        left=_MARGIN_LR_IN,
+        right=_MARGIN_LR_IN,
+        top=_MARGIN_TB_IN,
+        bottom=_MARGIN_TB_IN,
+        header=0.0,
+        footer=0.0,
+    )
+    ws.print_options.horizontalCentered = True
+    ws.sheet_view.showGridLines = False
+    ws.print_area = (
+        f"A1:{get_column_letter(table.num_cols)}{table.num_rows}"
+    )
+
+    total_w = sum(_chars_to_pt(w) for w in col_width)
+    total_h = sum(
+        (ws.row_dimensions[r + 1].height or _MIN_ROW_HEIGHT)
+        for r in range(table.num_rows)
+    )
+
+    page_w, page_h = table.page_size or (0.0, 0.0)
+    landscape = (page_w > page_h) if page_w and page_h else (total_w > total_h)
+    ws.page_setup.orientation = "landscape" if landscape else "portrait"
+
+    paper_w = _A4_H_PT if landscape else _A4_W_PT
+    paper_h = _A4_W_PT if landscape else _A4_H_PT
+    avail_w = paper_w - 2 * _MARGIN_LR_IN * 72
+    avail_h = paper_h - 2 * _MARGIN_TB_IN * 72
+
+    if not total_w or not total_h:
+        return
+    scale = min(avail_w / total_w, avail_h / total_h)
+    if scale < 0.995:
+        ws.page_setup.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 1
 
 
 def build_workbook(

@@ -96,6 +96,14 @@ khi cần, ví dụ `R-TNCRB057` + `08406C.02` → `R-TNCRB057 08406C.02`), rồ
 Excel tự xuống dòng theo độ rộng cột. Chiều cao dòng được ước lượng sẵn để ô
 gộp (Excel không tự giãn ô gộp) vẫn hiện đủ chữ.
 
+Mỗi sheet còn được **đặt sẵn chế độ in**: khổ **A4**, đúng chiều của trang PDF
+(dọc/ngang), lề 0,3 inch, canh giữa theo chiều ngang, ẩn lưới và đặt vùng in
+đúng phạm vi bảng. Độ rộng cột và chiều cao hàng lấy theo **kích thước thật
+của đường kẻ trong PDF**, nên mở *Print Preview* là thấy bảng nằm gọn trong
+đúng 1 trang A4, gần như không phải chỉnh gì thêm. Bảng nhỏ hơn trang được giữ
+nguyên 100%; bảng lớn hơn một chút thì app tự bật **Fit to 1 page** để không
+tràn sang trang thứ hai.
+
 ## 6. Cách hoạt động (tóm tắt)
 
 ```
@@ -189,6 +197,9 @@ xử lý ô gộp một cách tự nhiên (ô gộp = một vùng trắng lớn 
   cột đó có thể không thành ô — nội dung ảnh không nằm trong file Excel.
 * **Bảng lồng trong bảng** hoặc bảng nhiều tầng header rất phức tạp: nên thử
   engine "sâu", hoặc sửa tay trên web trước khi tải.
+* **Một trang PDF có nhiều bảng rời**: mỗi bảng vẫn là một sheet riêng
+  (`T2-B1`, `T2-B2`, …) và mỗi sheet đều được đặt in vừa 1 trang A4. Bảng đặt
+  cạnh nhau trên cùng trang PDF sẽ không được ghép vào chung một sheet.
 * **Scan nghiêng**: tự phát hiện và xoay thẳng khi góc ≥ 0,25°.
 * **Ảnh scan mờ/nhiễu**: chữ Hán có thể sai; ô vàng là gợi ý cần soát.
 * **Giới hạn mặc định**: 60 trang/file, 100 MB/file, 20 file/lần — đổi bằng

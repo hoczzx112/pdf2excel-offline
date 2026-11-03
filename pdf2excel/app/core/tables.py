@@ -9,10 +9,39 @@ from .models import Table, TableCell, TextItem
 from .textlayer import _same_line, assemble_text
 
 
+def _line_coords(
+    lines: list[int], known: dict[int, float]
+) -> list[float] | None:
+    """Đổi chỉ số đường kẻ -> toạ độ pixel (nội suy mốc thiếu nếu có)."""
+    if len(lines) < 2:
+        return None
+    out: list[float] = []
+    prev: int | None = None
+    for idx in lines:
+        if idx in known:
+            out.append(float(known[idx]))
+            prev = idx
+            continue
+        nxt = next((j for j in lines if j > idx and j in known), None)
+        if prev is not None and nxt is not None:
+            x0, x1 = known[prev], known[nxt]
+            out.append(x0 + (x1 - x0) * (idx - prev) / (nxt - prev))
+        elif prev is not None:
+            out.append(float(known[prev]))
+        elif nxt is not None:
+            out.append(float(known[nxt]))
+        else:
+            return None
+    return out
+
+
 def _crop_edges(
     cells: list[TableCell], num_rows: int, num_cols: int
-) -> tuple[list[TableCell], int, int] | None:
-    """Cắt các hàng/cột rỗng ở rìa bảng (thường do viền trang bị nhận nhầm)."""
+) -> tuple[list[TableCell], int, int, int, int] | None:
+    """Cắt các hàng/cột rỗng ở rìa bảng (thường do viền trang bị nhận nhầm).
+
+    Trả thêm (r_off, c_off) để cắt cả mảng kích thước hàng/cột tương ứng.
+    """
     filled = [[False] * num_cols for _ in range(num_rows)]
     for c in cells:
         if not c.text.strip():
@@ -28,7 +57,7 @@ def _crop_edges(
     r0, r1 = rows_f[0], rows_f[-1]
     c0, c1 = cols_f[0], cols_f[-1]
     if r0 == 0 and c0 == 0 and r1 == num_rows - 1 and c1 == num_cols - 1:
-        return cells, num_rows, num_cols
+        return cells, num_rows, num_cols, 0, 0
 
     out: list[TableCell] = []
     for c in cells:
@@ -45,7 +74,7 @@ def _crop_edges(
                 text=c.text, score=c.score,
             )
         )
-    return out, r1 - r0 + 1, c1 - c0 + 1
+    return out, r1 - r0 + 1, c1 - c0 + 1, r0, c0
 
 
 def _estimate_line_height(items: list[TextItem], default: float = 12.0) -> float:
@@ -59,8 +88,14 @@ def build_page_tables(
     page_no: int,
     engine: str,
     page_h: float,
+    px_per_pt: float = 1.0,
 ) -> list[Table]:
-    """Gom ô -> bảng, ghép chữ vào từng ô, chuẩn hoá chỉ số hàng/cột."""
+    """Gom ô -> bảng, ghép chữ vào từng ô, chuẩn hoá chỉ số hàng/cột.
+
+    px_per_pt: số pixel ảnh ứng với 1 point của PDF (thường = DPI / 72); dùng để
+    ghi lại kích thước thật của cột/hàng cho bước xuất Excel.
+    """
+    scale = max(1e-6, float(px_per_pt))
     tables: list[Table] = []
     for idx, group in enumerate(group_tables(rects, page_h), start=1):
         row_lines = sorted({r.r0 for r in group} | {r.r1 + 1 for r in group})
@@ -71,6 +106,22 @@ def build_page_tables(
         num_cols = len(col_lines) - 1
         if num_rows < 1 or num_cols < 1 or num_rows * num_cols > 20000:
             continue
+
+        col_pt: list[float] = []
+        row_pt: list[float] = []
+        col_coord: dict[int, float] = {}
+        row_coord: dict[int, float] = {}
+        for r in group:
+            col_coord.setdefault(r.c0, r.x0)
+            col_coord.setdefault(r.c1 + 1, r.x1)
+            row_coord.setdefault(r.r0, r.y0)
+            row_coord.setdefault(r.r1 + 1, r.y1)
+        col_px = _line_coords(col_lines, col_coord)
+        row_px = _line_coords(row_lines, row_coord)
+        if col_px and len(col_px) == num_cols + 1:
+            col_pt = [(col_px[i + 1] - col_px[i]) / scale for i in range(num_cols)]
+        if row_px and len(row_px) == num_rows + 1:
+            row_pt = [(row_px[i + 1] - row_px[i]) / scale for i in range(num_rows)]
 
         cells: list[TableCell] = []
         for r in group:
@@ -92,7 +143,9 @@ def build_page_tables(
         cropped = _crop_edges(cells, num_rows, num_cols)
         if cropped is None:
             continue
-        cells, num_rows, num_cols = cropped
+        cells, num_rows, num_cols, r_off, c_off = cropped
+        col_pt = col_pt[c_off:c_off + num_cols]
+        row_pt = row_pt[r_off:r_off + num_rows]
 
         x0 = min(r.x0 for r in group)
         y0 = min(r.y0 for r in group)
@@ -107,6 +160,8 @@ def build_page_tables(
                 cells=cells,
                 engine=engine,
                 bbox=(x0, y0, x1, y1),
+                col_widths=col_pt,
+                row_heights=row_pt,
             )
         )
     return tables
