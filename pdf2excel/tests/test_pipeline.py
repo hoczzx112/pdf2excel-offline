@@ -173,6 +173,35 @@ def test_text_erase_keeps_touching_grid_line() -> None:
     assert int((clean[20:45, 10:49] > 0).sum()) == 0, "vùng chữ phải được xoá"
 
 
+def test_text_erase_keeps_grid_line_crossing_the_box() -> None:
+    """Chữ rộng hơn ô, hộp bao VƯỢT QUA đường kẻ: đường kẻ phải được giữ lại.
+
+    File WI-TCFX có ô `产品0.3mTmax` rộng hơn ô nên ký tự `x` phủ lên vạch dọc;
+    nếu xoá trọn hộp bao thì vạch bị cắt một đoạn và hai ô bị gộp làm một.
+    """
+    import numpy as np
+
+    from app.core.gridlines import remove_text_pixels
+    from app.core.models import TextItem
+
+    binary = np.zeros((80, 80), np.uint8)
+    binary[:, 49:52] = 255          # đường kẻ dọc chạy xuyên hộp chữ
+    binary[37:40, :] = 255          # đường kẻ ngang cũng chạy xuyên hộp chữ
+    binary[25:35, 33:38] = 255      # nét chữ nằm trong hộp
+    binary[25:35, 58:63] = 255      # nét chữ phía bên kia đường kẻ
+
+    item = TextItem(x0=30, y0=20, x1=70, y1=55, text="产品0.3mTmax")
+    clean = remove_text_pixels(binary, [item])
+
+    # đường kẻ dọc/ngang vẫn liền mạch trong phạm vi hộp chữ
+    assert int((clean[21:55, 50] > 0).sum()) == 34, "đường kẻ dọc bị cắt"
+    assert int((clean[38, 31:70] > 0).sum()) == 39, "đường kẻ ngang bị cắt"
+    # nhưng nét chữ thì đã bị xoá sạch
+    assert int((clean[25:35, 33:38] > 0).sum()) == 0, "nét chữ phải được xoá"
+    assert int((clean[25:35, 58:63] > 0).sum()) == 0, "nét chữ phải được xoá"
+
+
+
 
 # ---------------------------------------------------------------- pipeline
 def test_convert_synthetic_table() -> None:
@@ -294,7 +323,8 @@ def test_text_drawn_as_outline_is_not_read_as_diameter() -> None:
 
     File WI-JQX vẽ cụm "300s" bằng path có hộp bao trùm cả cụm; hai chữ "0"
     cạnh nhau tạo ra đúng 2 lỗ tròn nên bộ dò ø (chỉ đếm lỗ) bị lừa. Nét vẽ
-    thật của ø là MỘT khối liền và hai lỗ lệch nhau theo cả hai trục.
+    thật của ø là MỘT khối liền và **giữa hai lỗ là nét gạch liền** — hai chữ
+    "0" cạnh nhau thì giữa chúng là khe trắng.
     """
     import cv2
     import numpy as np
@@ -321,6 +351,26 @@ def test_text_drawn_as_outline_is_not_read_as_diameter() -> None:
     cv2.ellipse(eight, (10, 9), (7, 6), 0, 0, 360, 0, 2)
     cv2.ellipse(eight, (10, 22), (7, 6), 0, 0, 360, 0, 2)
     assert not looks_like_diameter(eight)
+
+    # ø có gạch chéo gần như THẲNG ĐỨNG (file 2.pdf: hai lỗ cạnh nhau theo
+    # trục ngang, nét gạch lấp kín khe giữa) vẫn phải nhận ra.
+    o_vert = blank(22, 18)
+    cv2.ellipse(o_vert, (9, 11), (8, 10), 0, 0, 360, 0, 2)
+    cv2.line(o_vert, (9, 1), (9, 21), 0, 3)
+    assert looks_like_diameter(o_vert)
+
+    # hai chữ "0" đứng cạnh nhau: 2 lỗ nhưng giữa là khe trắng -> không phải ø
+    two_zero = blank(31, 45)
+    cv2.ellipse(two_zero, (9, 15), (6, 13), 0, 0, 360, 0, 2)
+    cv2.ellipse(two_zero, (31, 15), (6, 13), 0, 0, 360, 0, 2)
+    assert not looks_like_diameter(two_zero)
+
+    # ký hiệu ø bị xoay 90° (hai lỗ xếp dọc, glyph rộng hơn cao) vẫn nhận ra;
+    # chữ "8" ở trên cũng xếp dọc nhưng cao hơn rộng nên đã bị loại.
+    o_rot = blank(19, 31)
+    cv2.ellipse(o_rot, (15, 9), (10, 8), 0, 0, 360, 0, 2)
+    cv2.line(o_rot, (2, 9), (28, 9), 0, 4)
+    assert looks_like_diameter(o_rot)
 
 
 def test_space_between_number_and_thread_class() -> None:

@@ -87,16 +87,43 @@ def remove_text_pixels(binary: np.ndarray, items, inset: int = 1) -> np.ndarray:
     (nhất là nới thêm 1 px) thì đường kẻ bị "gặm" mất 1–2 px ngay chỗ chữ nằm
     sát viền; vùng trắng khi đó rò sang ô bên cạnh và hai ô bị gộp làm một.
     Vì vậy hộp xoá được thụt vào `inset` px thay vì nới ra.
+
+    Có trường hợp chữ **rộng hơn ô** nên hộp bao vượt hẳn qua đường kẻ (ví dụ
+    `产品0.3mTmax` trong file WI-TCFX: chữ `x` phủ lên vạch dọc). Khi đó thụt
+    vào vẫn không đủ: cả một đoạn vạch bị xoá và hai ô dính nhau. Nên trước
+    khi xoá, giữ lại những cột/dòng có mực **liền mạch ngay trên và dưới**
+    hộp chữ — đó là đường kẻ chạy xuyên qua, không phải nét của ký tự.
     """
     out = binary.copy()
     h, w = out.shape[:2]
+    ink = binary > 0
+    band = 6
     for it in items:
         x0 = max(0, int(round(it.x0)) + inset)
         y0 = max(0, int(round(it.y0)) + inset)
         x1 = min(w, int(round(it.x1)) - inset + 1)
         y1 = min(h, int(round(it.y1)) - inset + 1)
-        if x1 > x0 and y1 > y0:
-            out[y0:y1, x0:x1] = 0
+        if x1 <= x0 or y1 <= y0:
+            continue
+
+        keep_cols = np.zeros(x1 - x0, dtype=bool)
+        up = ink[max(0, y0 - band):y0, x0:x1]
+        dn = ink[y1:min(h, y1 + band), x0:x1]
+        if up.shape[0] and dn.shape[0]:
+            keep_cols = (up.mean(axis=0) >= 0.6) & (dn.mean(axis=0) >= 0.6)
+
+        keep_rows = np.zeros(y1 - y0, dtype=bool)
+        lf = ink[y0:y1, max(0, x0 - band):x0]
+        rt = ink[y0:y1, x1:min(w, x1 + band)]
+        if lf.shape[1] and rt.shape[1]:
+            keep_rows = (lf.mean(axis=1) >= 0.6) & (rt.mean(axis=1) >= 0.6)
+
+        src = binary[y0:y1, x0:x1]
+        out[y0:y1, x0:x1] = 0
+        if keep_cols.any():
+            out[y0:y1, x0:x1][:, keep_cols] = src[:, keep_cols]
+        if keep_rows.any():
+            out[y0:y1, x0:x1][keep_rows, :] = src[keep_rows, :]
     return out
 
 

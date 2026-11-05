@@ -154,10 +154,14 @@ Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách x�
 * **Hai ô dính nhau / chữ bị đảo thứ tự** (PDF có text layer) — hộp bao ký tự
   của pdfium chạm sát đường kẻ, nên bước xoá chữ "gặm" mất 1–2 px đường kẻ và
   vùng trắng rò sang ô bên cạnh (ví dụ cột *特性值* nuốt luôn cột *检验器具*).
-  Nay hộp xoá được **thụt vào 1 px** thay vì nới ra. Cùng lúc, số mũ (`10⁸`) nằm
-  cao hơn dòng nên trước đây bị tách thành dòng riêng, làm chữ đảo thứ tự
-  (`隙)：1.51×10⁸` → `隙1 51×108` + `)：.`); nay các ký tự được gom dòng theo
-  **độ chồng lấn theo trục dọc**, nên số mũ nằm đúng dòng của nó.
+  Nay hộp xoá được **thụt vào 1 px** thay vì nới ra. Với chữ **rộng hơn ô** nên
+  hộp bao vượt hẳn qua vạch kẻ (kiểu `产品0.3mTmax`), bước xoá còn **giữ lại
+  những cột/dòng có mực liền mạch ngay trên+dưới** hộp — đó là đường kẻ chạy
+  xuyên qua, không phải nét ký tự, nên vạch không bị cắt thành hai đoạn.
+  Cùng lúc, số mũ (`10⁸`) nằm cao hơn dòng nên trước đây bị tách thành dòng
+  riêng, làm chữ đảo thứ tự (`隙)：1.51×10⁸` → `隙1 51×108` + `)：.`); nay các
+  ký tự được gom dòng theo **độ chồng lấn theo trục dọc**, nên số mũ nằm đúng
+  dòng của nó.
 * **`1,2` bị tách thành `1 2` + `,`** — dấu phẩy là glyph thấp, gần như không
   chồng lấn theo trục dọc với chữ số cùng dòng, nên bị coi là "dòng khác". Nay
   ngoài độ chồng lấn còn so **đường chân** (đáy hộp bao) với dung sai
@@ -167,11 +171,13 @@ Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách x�
   bằng nét vector** (một vòng elip bị gạch chéo), text layer hoàn toàn không có
   ký tự nào, nên đọc chữ không bao giờ thấy. Nay app dò thêm các *path* vector
   cỡ một ký tự và nhận dạng hình học: ảnh render là **một** nét liền, vòng kín
-  chia thành **đúng 2 lỗ** nhỏ, gần bằng nhau và nằm sát nhau theo cả hai trục
-  (gạch chéo chỉ là nét mảnh cắt vòng). Nhờ vậy ô ra `ø73(0/-0.009)` thay vì
-  `73(0/-0.009)`; nét kẻ bảng, ô checkbox (1 lỗ to, hoặc 2 lỗ không cân) và
-  chuỗi chữ được vẽ lại bằng nét (kiểu `300s` — hai chữ `0` cạnh nhau cũng tạo
-  2 lỗ tròn) đều bị loại nên không sinh ký hiệu giả.
+  chia thành **đúng 2 lỗ** nhỏ, gần bằng nhau; hai lỗ hoặc **chồng lên nhau**
+  (gạch chéo ~45°), hoặc nằm cạnh nhau và **giữa chúng là một nét mực liền**
+  (gạch chéo gần thẳng đứng, như ký hiệu trong file YMFQ). Nhờ vậy ô ra
+  `ø73(0/-0.009)` thay vì `73(0/-0.009)`. Nét kẻ bảng, ô checkbox (1 lỗ to,
+  hoặc 2 lỗ không cân), chuỗi chữ vẽ lại bằng nét (kiểu `300s` — hai chữ `0`
+  cạnh nhau cũng tạo 2 lỗ nhưng giữa là khe trắng) và chữ `8` (2 lỗ xếp dọc
+  nhưng cao hơn rộng) đều bị loại nên không sinh ký hiệu giả.
 
 Vì sao không dùng thư viện nhận dạng bảng phổ biến?
 

@@ -66,9 +66,10 @@ def looks_like_diameter(crop: np.ndarray) -> bool:
 
     * nét vẽ là **một** khối liền (vòng + gạch chéo dính nhau), không phải
       nhiều nét rời như các chữ cái;
-    * hai lỗ nằm **sát nhau theo cả hai trục** — gạch chéo chỉ là một nét mảnh
-      cắt vòng, nên hộp bao của hai lỗ chồng lên nhau. Hai chữ "0" đứng cạnh
-      nhau thì hở theo trục ngang, chữ "8" thì hở theo trục dọc.
+    * hai lỗ do nét gạch chia ra, nên hoặc chồng lên nhau, hoặc nằm sát nhau
+      và **giữa chúng là một nét liền** (không có khe trắng). Hai chữ `0` cạnh
+      nhau cũng tạo 2 lỗ nhưng giữa là khoảng trắng; chữ `8` thì 2 lỗ xếp dọc
+      và ký tự luôn cao hơn rộng.
     """
     if crop.size == 0:
         return False
@@ -106,18 +107,47 @@ def looks_like_diameter(crop: np.ndarray) -> bool:
         if x1 - x0 > 0.60 * w or y1 - y0 > 0.80 * h:
             return False
 
-    # hai lỗ phải chồng lên nhau (theo cả x và y) sau khi nới một chút: nét
-    # gạch chéo rất mảnh nên hộp bao hai nửa vòng gần như trùng nhau.
+    # hai lỗ phải "dính" nhau: gạch chéo của ø là một nét mảnh cắt vòng nên
+    # hai nửa vòng hoặc chồng nhau, hoặc chỉ cách nhau đúng bề dày nét gạch.
     def _gap(a0: float, a1: float, b0: float, b1: float) -> float:
         return max(0.0, max(a0, b0) - min(a1, b1))
 
-    tol_x = 0.20 * max(holes[0][3] - holes[0][1], holes[1][3] - holes[1][1])
-    tol_y = 0.20 * max(holes[0][4] - holes[0][2], holes[1][4] - holes[1][2])
-    if _gap(holes[0][1], holes[0][3], holes[1][1], holes[1][3]) > tol_x:
-        return False
-    if _gap(holes[0][2], holes[0][4], holes[1][2], holes[1][4]) > tol_y:
-        return False
-    return True
+    (a1, xa0, ya0, xa1, ya1), (a2, xb0, yb0, xb1, yb1) = holes
+    hw = max(xa1 - xa0, xb1 - xb0)
+    hh = max(ya1 - ya0, yb1 - yb0)
+    gx = _gap(xa0, xa1, xb0, xb1)
+    gy = _gap(ya0, ya1, yb0, yb1)
+    tol_x = max(1.0, 0.15 * hw)
+    tol_y = max(1.0, 0.15 * hh)
+
+    if gx <= tol_x and gy <= tol_y:
+        return True                       # hai lỗ chồng nhau (gạch chéo 45°)
+
+    def _bridge(i0: int, i1: int, j0: int, j1: int, axis: int) -> bool:
+        """Nét nối giữa 2 lỗ có phải là mực liền (không có khe trắng)?"""
+        if i1 - i0 < 1 or j1 - j0 < 1:
+            return False
+        strip = ink[i0:i1, j0:j1] if axis == 0 else ink[j0:j1, i0:i1]
+        return strip.size > 0 and float(strip.mean()) >= 0.85
+
+    if gy <= tol_y and gx > tol_x:
+        # Gạch chéo gần như thẳng đứng: hai lỗ nằm cạnh nhau theo trục ngang.
+        # Hai chữ "0" đứng cạnh nhau cũng vậy, nhưng giữa chúng là khoảng
+        # trắng nên bị loại; nét gạch của ø thì liền một mạch.
+        return _bridge(
+            int(max(ya0, yb0)), int(min(ya1, yb1)),
+            int(min(xa1, xb1)), int(max(xa0, xb0)), axis=0,
+        )
+    if gx <= tol_x and gy > tol_y:
+        # Ký hiệu bị xoay 90° (chữ trong bản vẽ đặt dọc): hai lỗ xếp trên-
+        # dưới. Chữ "8" cũng xếp dọc nhưng luôn cao hơn rộng nên bị loại.
+        if w <= h:
+            return False
+        return _bridge(
+            int(max(xa0, xb0)), int(min(xa1, xb1)),
+            int(min(ya1, yb1)), int(max(ya0, yb0)), axis=1,
+        )
+    return False
 
 
 def vector_glyph_items(
