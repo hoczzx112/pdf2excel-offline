@@ -131,7 +131,7 @@ PDF ──► render trang (200 DPI) ──► nhị phân hoá
         lấp lại ô bị bỏ sót: ô có chữ + đủ 4 cạnh là nét kẻ thật
                                  ▼
         ghép chữ vào ô (giữ thứ tự dòng, khoảng trắng cho tiếng Anh,
-        không chèn khoảng trắng giữa chữ Hán) → Excel
+        chữ Hán chỉ cách nhau khi hở > 1,2 em) → Excel
 ```
 
 Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách xử lý:
@@ -178,6 +178,15 @@ Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách x�
   hoặc 2 lỗ không cân), chuỗi chữ vẽ lại bằng nét (kiểu `300s` — hai chữ `0`
   cạnh nhau cũng tạo 2 lỗ nhưng giữa là khe trắng) và chữ `8` (2 lỗ xếp dọc
   nhưng cao hơn rộng) đều bị loại nên không sinh ký hiệu giả.
+* **Ô tick ☑/☐ bị mất** — khung ô chọn được **vẽ bằng nét vector** (4 cạnh
+  trong một path), còn dấu `√` mới nằm trong text layer. Text layer không có
+  ký tự nào cho cái khung, nên Excel chỉ còn `√样件试生产量产` — hai ô chưa
+  tick biến mất hẳn. Nay app nhận khung vuông rỗng: path cỡ 5–16 pt, ảnh
+  render có **bốn cạnh ngoài là nét liền**, bốn viền dày gần bằng nhau và ruột
+  rỗng. Vòng tròn (ký hiệu ⊕ trong bản vẽ), nét chéo và chữ vẽ bằng nét đều bị
+  loại. Khung có mực bên trong (dấu √) ra `☑`, khung rỗng ra `☐`, và dấu `√`
+  rời trong khung được bỏ để không bị lặp thành `☑√`.
+  Nhờ vậy dòng đầu trang ra `☑样件 ☐试生产 ☐量产` giống bản PDF.
 
 Vì sao không dùng thư viện nhận dạng bảng phổ biến?
 

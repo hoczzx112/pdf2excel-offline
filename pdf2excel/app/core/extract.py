@@ -17,7 +17,7 @@ from .ocr import items_to_text, ocr_items
 from .render import deskew, estimate_skew, open_pdf, render_page, save_png
 from .tables import build_page_tables, whitespace_tables
 from .textlayer import page_text_items
-from .vectorglyph import vector_glyph_items
+from .vectorglyph import resolve_checkbox_marks, vector_glyph_items
 
 log = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ def convert(
                 items = page_text_items(page, scale)
                 extra = vector_glyph_items(page, img, scale, items)
                 if extra:
-                    items = items + extra
+                    items = resolve_checkbox_marks(items + extra)
                 text = page.get_textpage().get_text_range() or ""
                 used = "text"
 

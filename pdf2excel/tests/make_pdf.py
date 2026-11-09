@@ -64,6 +64,34 @@ def _circle_slash(cx: float, cy: float, rx: float, ry: float,
     return " ".join(ops)
 
 
+def _square_box(x: float, y: float, size: float, rotate: int, page_h: float) -> str:
+    """Khung vuông rỗng (ô tick ☐) vẽ bằng nét, không có trong text layer.
+
+    Cả 4 cạnh nằm trong **một** path (giống file thật) để pdfium trả về một
+    hộp bao duy nhất.
+    """
+    corners = (
+        (x, y), (x + size, y), (x + size, y + size), (x, y + size), (x, y),
+    )
+    mapped = [_to_pdf(px, py, rotate, page_h) for px, py in corners]
+    ops = [f"{mapped[0][0]:.1f} {mapped[0][1]:.1f} m"]
+    ops.extend(f"{px:.1f} {py:.1f} l" for px, py in mapped[1:])
+    ops.append("S")
+    return " ".join(ops)
+
+
+def _tick(x: float, y: float, size: float, rotate: int, page_h: float) -> str:
+    """Dấu √ vẽ bằng nét bên trong ô tick (để test ô ☑)."""
+    s = size
+    p0 = _to_pdf(x + 0.18 * s, y + 0.52 * s, rotate, page_h)
+    p1 = _to_pdf(x + 0.42 * s, y + 0.76 * s, rotate, page_h)
+    p2 = _to_pdf(x + 0.84 * s, y + 0.22 * s, rotate, page_h)
+    return (
+        f"{p0[0]:.1f} {p0[1]:.1f} m {p1[0]:.1f} {p1[1]:.1f} l "
+        f"{p2[0]:.1f} {p2[1]:.1f} l S"
+    )
+
+
 def build_table_pdf(
     path: str | Path,
     header: tuple[str, ...] = ("Code", "Name", "Qty"),
@@ -73,6 +101,7 @@ def build_table_pdf(
     page_count: int = 1,
     diameter: bool = False,
     second_y: float | None = None,
+    checkboxes: bool = False,
 ) -> Path:
     """Một hoặc nhiều trang A4, mỗi trang có 1 bảng kẻ 3 cột.
 
@@ -81,6 +110,8 @@ def build_table_pdf(
     diameter: vẽ thêm ký hiệu ø bằng nét vector trước giá trị Qty hàng 1.
     second_y: nếu có, vẽ thêm một bảng nhỏ 2 cột ở vị trí này (cùng trang) để
         kiểm tra việc gộp nhiều bảng rời vào chung một sheet.
+    checkboxes: vẽ ô tick ☑ (có dấu tick bằng nét) trước "Code" và ô ☐ trống
+        trước "Name" — cả hai khung đều không có trong text layer.
     """
     disp_w, disp_h = (page[1], page[0]) if rotate in (90, 270) else (page[0], page[1])
 
@@ -107,8 +138,19 @@ def build_table_pdf(
 
     # chữ (baseline cách đáy ô 7pt như bản gốc)
     x_cell = x0
+    box_size = 9.0
     for i, w in enumerate(col_w):
-        ops.append(_text(x_cell + 5, y_top + row_h - 7, header[i], rotate, page[1]))
+        tx = x_cell + 5
+        if checkboxes and i == 0:
+            # ô ☑: khung + dấu tick đều vẽ bằng nét
+            ops.append(_square_box(tx, y_top + 5, box_size, rotate, page[1]))
+            ops.append(_tick(tx, y_top + 5, box_size, rotate, page[1]))
+            tx += box_size + 4
+        elif checkboxes and i == 1:
+            # ô ☐ trống
+            ops.append(_square_box(tx, y_top + 5, box_size, rotate, page[1]))
+            tx += box_size + 4
+        ops.append(_text(tx, y_top + row_h - 7, header[i], rotate, page[1]))
         x_cell += w
     for r_idx, row in enumerate(rows, start=1):
         y_text = y_top + (r_idx + 1) * row_h - 7

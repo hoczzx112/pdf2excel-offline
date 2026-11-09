@@ -269,7 +269,10 @@ def _join_line(items: list[TextItem], avg_h: float) -> str:
             if (it.space_before and not prev.synthetic) or gap > 0.45 * avg_h:
                 a, b = prev.text[-1:], it.text[:1]
                 tight = a in _TIGHT or b in _TIGHT
-                if not (tight or is_cjk(a) or is_cjk(b)):
+                # Khoảng hở rất lớn (> 1,2 em) là chỗ ngắt từ có chủ ý, kể cả
+                # giữa hai chữ Hán — ví dụ dòng "☑样件   ☐试生产   ☐量产".
+                wide = gap > 1.2 * avg_h
+                if not tight and (wide or not (is_cjk(a) or is_cjk(b))):
                     parts.append(" ")
         parts.append(it.text)
         prev = it

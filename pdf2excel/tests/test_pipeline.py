@@ -318,6 +318,48 @@ def test_vector_diameter_symbol_is_recovered() -> None:
     assert grid[2] == ["A2", "Nut M6", "20"]
 
 
+def test_vector_checkboxes_are_recovered() -> None:
+    """Ô tick vẽ bằng nét vector phải ra ☑/☐ (file 1.pdf bị mất cả hai ô)."""
+    tmp = _tmpdir()
+    pdf = build_table_pdf(tmp / "boxes.pdf", checkboxes=True)
+    res = convert(pdf)
+
+    grid = res.tables[0].grid()
+    assert grid[0][0].startswith("\u2611"), grid[0]
+    assert "Code" in grid[0][0], grid[0]
+    assert grid[0][1].startswith("\u2610"), grid[0]
+    assert "Name" in grid[0][1], grid[0]
+    assert grid[0][2] == "Qty", grid[0]
+
+
+def test_checkbox_geometry_and_mark_resolution() -> None:
+    """Khung vuông rỗng mới là ô tick; dấu √ trong ô đổi thành ☑ và bỏ dấu rời."""
+    import cv2
+    import numpy as np
+
+    from app.core.models import TextItem
+    from app.core.vectorglyph import looks_like_checkbox, resolve_checkbox_marks
+
+    empty_box = np.full((28, 28), 255, np.uint8)
+    cv2.rectangle(empty_box, (1, 1), (26, 26), 0, 2)
+    assert looks_like_checkbox(empty_box)
+
+    # vòng tròn có gạch (ký hiệu ⊕ trong bản vẽ) không phải ô tick
+    circle = np.full((34, 34), 255, np.uint8)
+    cv2.circle(circle, (17, 17), 15, 0, 2)
+    cv2.line(circle, (2, 17), (32, 17), 0, 2)
+    assert not looks_like_checkbox(circle)
+
+    # ô đặc (hoặc chữ 回) không phải ô tick
+    assert not looks_like_checkbox(np.zeros((28, 28), np.uint8))
+
+    box = TextItem(x0=10, y0=10, x1=38, y1=38, text="\u2610", synthetic=True)
+    mark = TextItem(x0=20, y0=20, x1=26, y1=32, text="\u221a")
+    items = resolve_checkbox_marks([mark, box])
+    assert box.text == "\u2611"
+    assert len(items) == 1 and items[0] is box
+
+
 def test_text_drawn_as_outline_is_not_read_as_diameter() -> None:
     """Chuỗi chữ vẽ bằng nét (vd "300s") không được nhận thành "ø300s".
 

@@ -7,8 +7,12 @@ không có ký tự nào cho ký hiệu này, nên ô Excel ra `73(0/-0.009)` th
 
 Cách nhận: mỗi ký hiệu là một đối tượng *path* riêng, kích thước cỡ một ký tự;
 ảnh render của nó là một vòng kín bị gạch chéo chia làm **đúng 2 lỗ** thông
-nhau, hai lỗ đều nhỏ và gần bằng nhau. Các nét kẻ bảng (dài, mảnh) và ô
-checkbox (1 lỗ to, hoặc 2 lỗ to không cân) bị loại.
+nhau, hai lỗ đều nhỏ và gần bằng nhau. Các nét kẻ bảng (dài, mảnh) bị loại.
+
+Nhiều file còn vẽ **ô vuông tick** (☐/☑) bằng nét vector: khung vuông rỗng,
+bên trong có thể có dấu √ (dấu √ thì thường nằm trong text layer). Text layer
+không có ký tự nào cho cái khung, nên nếu chỉ đọc chữ thì Excel mất hẳn các ô
+chọn — ô ra `样件 试生产 量产` thay vì `☑样件 ☐试生产 ☐量产`.
 """
 from __future__ import annotations
 
@@ -20,6 +24,11 @@ from .models import TextItem
 PATH_OBJECT = 2            # FPDF_PAGEOBJ_PATH
 MAX_GLYPH_PT = 30.0        # ký hiệu lớn hơn mức này là hình vẽ, không phải chữ
 DIAMETER = "\u00f8"
+CHECKBOX = "\u2610"        # ☐ ô chọn chưa tick
+CHECKBOX_CHECKED = "\u2611"  # ☑ ô chọn đã tick
+BOX_MIN_PT = 5.0           # ô tick thường cỡ 8–12 pt
+BOX_MAX_PT = 16.0
+CHECK_MARKS = frozenset("\u221a\u2713\u2714")  # √ ✓ ✔
 
 
 def _page_frame(page) -> tuple[int, float, float, float, float]:
@@ -150,10 +159,71 @@ def looks_like_diameter(crop: np.ndarray) -> bool:
     return False
 
 
+def looks_like_checkbox(crop: np.ndarray) -> bool:
+    """True nếu vùng ảnh là một khung vuông rỗng vẽ bằng nét (ô tick ☐/☑).
+
+    Điều kiện hình học:
+
+    * kích thước gần vuông và nét bao phủ gần hết hộp bao của path;
+    * **bốn cạnh ngoài của hộp bao là nét liền** — khung vuông kín. Vòng tròn
+      (ký hiệu ⊕ trong bản vẽ) hay nét chéo chỉ chạm cạnh ở vài điểm giữa nên
+      bị loại;
+    * bốn dải viền có độ dày gần bằng nhau (chữ cái vẽ bằng nét luôn lệch);
+    * ruột rỗng (chỉ có thể có dấu tick bên trong, không phải ô đặc hay chữ
+      như `回`).
+    """
+    if crop.size == 0:
+        return False
+    ink = (crop < 128).astype(np.uint8)
+    h, w = ink.shape
+    if h < 8 or w < 8:
+        return False
+    if not (0.85 <= w / h <= 1.18):
+        return False
+    frac = float(ink.mean())
+    if not (0.18 <= frac <= 0.45):
+        return False
+    ys, xs = np.nonzero(ink)
+    if len(xs) == 0:
+        return False
+    bx0, bx1 = int(xs.min()), int(xs.max())
+    by0, by1 = int(ys.min()), int(ys.max())
+    if bx1 - bx0 + 1 < 0.80 * w or by1 - by0 + 1 < 0.80 * h:
+        return False
+    edges = (
+        ink[by0, bx0:bx1 + 1].mean(),
+        ink[by1, bx0:bx1 + 1].mean(),
+        ink[by0:by1 + 1, bx0].mean(),
+        ink[by0:by1 + 1, bx1].mean(),
+    )
+    if min(edges) < 0.80:
+        return False
+    t = max(2, int(round(0.18 * min(h, w))))
+    strips = (
+        float(ink[:t, :].mean()), float(ink[-t:, :].mean()),
+        float(ink[:, :t].mean()), float(ink[:, -t:].mean()),
+    )
+    if min(strips) < 0.30:
+        return False
+    if min(strips) / max(strips) < 0.65:
+        return False
+    center = ink[int(0.30 * h):int(0.70 * h), int(0.30 * w):int(0.70 * w)]
+    return float(center.mean()) <= 0.35
+
+
+def _checkbox_is_checked(crop: np.ndarray) -> bool:
+    """Ô tick có dấu bên trong? (dấu √ có thể là chữ hoặc nét vẽ)."""
+    ink = (crop < 128).astype(np.uint8)
+    h, w = ink.shape
+    m = max(2, int(round(0.22 * min(h, w))))
+    inner = ink[m:h - m, m:w - m]
+    return inner.size > 0 and float(inner.mean()) > 0.02
+
+
 def vector_glyph_items(
     page, img: np.ndarray, scale: float, existing: list[TextItem] | None = None
 ) -> list[TextItem]:
-    """Các ký hiệu vector đoán được (hiện chỉ có ø) -> danh sách TextItem."""
+    """Các ký hiệu vector đoán được (ø, ô tick ☐/☑) -> danh sách TextItem."""
     rot, off_x, off_y, w0, h0 = _page_frame(page)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if img.ndim == 3 else img
     height, width = gray.shape[:2]
@@ -185,10 +255,32 @@ def vector_glyph_items(
         if ix1 - ix0 < 6 or iy1 - iy0 < 6:
             continue
 
-        if not looks_like_diameter(gray[iy0:iy1, ix0:ix1]):
+        crop = gray[iy0:iy1, ix0:ix1]
+        box = (ix0, iy0, ix1, iy1)
+
+        if (
+            BOX_MIN_PT <= pw <= BOX_MAX_PT
+            and BOX_MIN_PT <= ph <= BOX_MAX_PT
+            and looks_like_checkbox(crop)
+        ):
+            if existing and (
+                any(_covers_existing(box, it) for it in existing)
+                or _covers_text_run(box, existing)
+            ):
+                continue                  # khung đã có trong text layer
+            checked = _checkbox_is_checked(crop)
+            out.append(
+                TextItem(
+                    x0=ix0, y0=iy0, x1=ix1, y1=iy1,
+                    text=CHECKBOX_CHECKED if checked else CHECKBOX,
+                    synthetic=True,
+                )
+            )
             continue
 
-        box = (ix0, iy0, ix1, iy1)
+        if not looks_like_diameter(crop):
+            continue
+
         if existing and any(_covers_existing(box, it) for it in existing):
             continue                      # ký hiệu đã có trong text layer
         if existing and _covers_text_run(box, existing):
@@ -199,6 +291,30 @@ def vector_glyph_items(
             )
         )
     return out
+
+
+def resolve_checkbox_marks(items: list[TextItem]) -> list[TextItem]:
+    """Bỏ dấu √ nằm trong ô tick (đã thay bằng ☑) và đồng bộ trạng thái ô.
+
+    File PDF thường để dấu √ là chữ trong text layer còn cái khung là nét vẽ.
+    Nếu giữ cả hai, ô Excel ra `☑√样件` — thừa dấu. Hàm này bỏ dấu rời và đánh
+    dấu ☑ cho khung chứa nó.
+    """
+    boxes = [it for it in items if it.synthetic and it.text in (CHECKBOX, CHECKBOX_CHECKED)]
+    if not boxes:
+        return items
+    drop: set[int] = set()
+    for i, it in enumerate(items):
+        if it.synthetic or it.text.strip() not in CHECK_MARKS:
+            continue
+        for b in boxes:
+            if b.x0 <= it.cx <= b.x1 and b.y0 <= it.cy <= b.y1:
+                b.text = CHECKBOX_CHECKED
+                drop.add(i)
+                break
+    if not drop:
+        return items
+    return [it for i, it in enumerate(items) if i not in drop]
 
 
 def _covers_text_run(box, items: list[TextItem], min_items: int = 2) -> bool:
