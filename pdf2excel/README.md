@@ -187,6 +187,21 @@ Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách x�
   loại. Khung có mực bên trong (dấu √) ra `☑`, khung rỗng ra `☐`, và dấu `√`
   rời trong khung được bỏ để không bị lặp thành `☑√`.
   Nhờ vậy dòng đầu trang ra `☑样件 ☐试生产 ☐量产` giống bản PDF.
+* **Ký hiệu `ø` bị đọc thành `0`** (bản scan) — RapidOCR đọc nét gạch chéo của
+  `ø` thành chữ số, nên `ø129.5±0.05` ra `0129.5±0.05`, `8-ø3.9` ra `8-03.9`,
+  `钻ø3.9孔` ra `钻03.9孔`. Kết quả sai ổn định nên không thể sửa bằng cách đoán
+  chuỗi; app nhìn lại **ảnh** của đúng dòng đó: `ø` là một vòng bị nét gạch cắt
+  thành **hai nửa lỗ sát nhau** (giữa chúng chỉ là bề dày nét gạch), còn `0` chỉ
+  có một lỗ và `8` có hai lỗ nhưng **cách xa nhau**. Chỉ chữ `0` ở đầu chuỗi
+  hoặc ngay sau dấu ngăn cách / chữ Hán mới được xét, nên `0.001`, `AC=0`,
+  `20.09.2026` vẫn giữ nguyên.
+* **Chữ nhảy sang ô bên cạnh** (bản scan) — OCR hay gộp hai ô cạnh nhau thành
+  **một** dòng chữ (nhất là khi ô trái có chữ sát đường kẻ), ví dụ
+  `★直接测量（首件送检不要去毛刺做★首检/末检` bị đọc thành một item, nên cả cụm
+  dồn vào ô `检测方法` còn ô `自检频次` trống. Nay item nào tràn qua **biên ô
+  thật** (biên của một cặp ô kề nhau trong lưới, không phải mọi đường kẻ của
+  bảng) đều được cắt lại theo vị trí ký tự, mỗi nửa vào đúng ô của nó; item chỉ
+  chờm qua biên một chút (hộp bao OCR rộng hơn chữ) thì giữ nguyên.
 
 Vì sao không dùng thư viện nhận dạng bảng phổ biến?
 
@@ -290,6 +305,8 @@ Python, không cần reportlab). Có thể chạy bằng `pytest tests/ -q`.
 | Cả bảng thành rác, chữ nằm sai ô (file có `/Rotate 90`) | Đã sửa: hộp bao ký tự của pdfium nằm ở hệ toạ độ **chưa xoay**, nay app xoay theo `/Rotate` của trang. Nếu vẫn lỗi, gửi lại file. |
 | Ô header ra `项\n目\n分\n类` (mỗi ký tự một dòng) | Đã sửa: dòng chữ mà pdfium cắt thành lát mỏng được chia lại theo chiều chạy của dòng. |
 | Ô hiện chữ cũ đã bị vẽ đè (vd. `共2页第7页`) | Đã sửa: bỏ lớp chữ nằm dưới, giữ lớp vẽ sau (lớp nhìn thấy trên giấy). |
+| Bản scan ra `0129.5±0.05` thay vì `ø129.5±0.05` | Đã sửa: app nhìn ảnh để phân biệt `ø` (hai nửa lỗ sát nhau) với `0`/`8`; `0.001`, `AC=0`, ngày tháng không bị đổi. |
+| Bản scan: chữ dài nhảy sang ô bên cạnh | Đã sửa: dòng OCR gộp hai ô được cắt lại theo biên ô thật, mỗi nửa vào đúng ô. |
 | Trang bản vẽ AutoCAD làm app rất chậm | Bật **Bỏ qua trang 1** (mặc định đã bật) rồi **Chuyển đổi lại tất cả**. |
 
 ## 13. Cấu trúc mã nguồn

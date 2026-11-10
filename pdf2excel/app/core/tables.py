@@ -6,7 +6,24 @@ import statistics
 from ..config import MIN_TABLE_CELLS
 from .gridlines import CellRect, group_tables
 from .models import Table, TableCell, TextItem
-from .textlayer import _same_line, assemble_text
+from .textlayer import _same_line, assemble_text, is_cjk
+
+# Ký hiệu rộng đúng bằng một chữ Hán nhưng không nằm trong dải CJK
+# (east_asian_width = "A" nên dễ bị coi là nửa độ rộng).
+_WIDE_SYMBOLS = set("★☆●○◎◆◇■□▲△▼▽※⊕⊗")
+
+
+def _char_units(ch: str) -> float:
+    """Độ rộng tương đối của ký tự (đơn vị = nửa độ rộng chữ Hán)."""
+    if ch in ".．,，":
+        return 0.45
+    if ch in "-−~–":
+        return 0.55
+    if ch == " ":
+        return 0.5
+    if ch in _WIDE_SYMBOLS or is_cjk(ch):
+        return 2.0
+    return 1.0
 
 
 def _line_coords(
@@ -82,6 +99,105 @@ def _estimate_line_height(items: list[TextItem], default: float = 12.0) -> float
     return statistics.median(hs) if hs else default
 
 
+def _cell_borders(group: list[CellRect]) -> list[tuple[float, float, float]]:
+    """Biên dọc **thật** giữa hai ô kề nhau: danh sách (x, y_trên, y_dưới).
+
+    Chỉ lấy biên của cặp ô có thật trong lưới, không lấy mọi đường kẻ dọc của
+    bảng: ở hàng có ô gộp, nhiều đường kẻ của lưới không hề tồn tại.
+    """
+    by_left: dict[int, list[CellRect]] = {}
+    for b in group:
+        by_left.setdefault(round(b.x0), []).append(b)
+    found: dict[tuple[int, int, int], tuple[float, float, float]] = {}
+    for a in group:
+        k = round(a.x1)
+        for key in range(k - 2, k + 3):
+            for b in by_left.get(key, ()):
+                if abs(a.x1 - b.x0) > 1.5:
+                    continue
+                top = max(a.y0, b.y0)
+                bot = min(a.y1, b.y1)
+                if bot - top < 0.6 * min(a.y1 - a.y0, b.y1 - b.y0):
+                    continue
+                x = (a.x1 + b.x0) / 2.0
+                found[(round(x), round(top), round(bot))] = (x, top, bot)
+    return list(found.values())
+
+
+def _cut_item(it: TextItem, cuts: list[float]) -> list[TextItem] | None:
+    """Cắt một item OCR thành nhiều item theo các biên ô (toạ độ x)."""
+    text = it.text
+    units = [_char_units(c) for c in text]
+    total = sum(units)
+    if len(text) < 2 or total <= 0 or it.w <= 0:
+        return None
+    unit = it.w / total                   # px cho 1 đơn vị độ rộng
+
+    picked: list[tuple[float, int]] = []
+    last = 0
+    for x in cuts:
+        rel = (x - it.x0) / unit          # vị trí biên theo đơn vị ký tự
+        acc = 0.0
+        best, best_d = 0, 1e9
+        for k in range(1, len(text)):
+            acc += units[k - 1]
+            if abs(acc - rel) < best_d:
+                best, best_d = k, abs(acc - rel)
+        if best <= last or best >= len(text):
+            continue
+        if best_d > 0.6:                   # biên rơi giữa ký tự -> không cắt
+            continue
+        left_units = sum(units[:best])
+        right_units = total - left_units
+        if left_units < 0.8 or right_units < 0.8:
+            continue
+        picked.append((x, best))
+        last = best
+    if not picked:
+        return None
+
+    edges = [it.x0] + [x for x, _ in picked] + [it.x1]
+    idxs = [0] + [k for _, k in picked] + [len(text)]
+    out: list[TextItem] = []
+    for i in range(len(picked) + 1):
+        part = text[idxs[i]:idxs[i + 1]].strip()
+        if not part:
+            continue
+        out.append(
+            TextItem(
+                x0=edges[i], y0=it.y0, x1=edges[i + 1], y1=it.y1,
+                text=part, score=it.score,
+            )
+        )
+    return out or None
+
+
+def _split_crossing_items(
+    items: list[TextItem], group: list[CellRect]
+) -> list[TextItem]:
+    """Tách item OCR tràn qua đường kẻ giữa hai ô thật.
+
+    RapidOCR hay gộp hai ô cạnh nhau thành một dòng chữ (nhất là khi ô bên trái
+    có chữ sát đường kẻ). Nếu để nguyên, `assemble_text` xếp cả dòng vào ô chứa
+    tâm item: ô bên trái nhận cả chữ của ô bên phải, còn ô bên phải trống.
+    """
+    borders = _cell_borders(group)
+    if not borders:
+        return items
+    out: list[TextItem] = []
+    for it in items:
+        cuts = sorted(
+            x for x, top, bot in borders
+            if it.x0 + 2.0 < x < it.x1 - 2.0 and top - 2.0 <= it.cy <= bot + 2.0
+        )
+        parts = _cut_item(it, cuts) if cuts else None
+        if parts:
+            out.extend(parts)
+        else:
+            out.append(it)
+    return out
+
+
 def build_page_tables(
     rects: list[CellRect],
     items: list[TextItem],
@@ -98,6 +214,7 @@ def build_page_tables(
     scale = max(1e-6, float(px_per_pt))
     tables: list[Table] = []
     for idx, group in enumerate(group_tables(rects, page_h), start=1):
+        group_items = _split_crossing_items(items, group)
         row_lines = sorted({r.r0 for r in group} | {r.r1 + 1 for r in group})
         col_lines = sorted({r.c0 for r in group} | {r.c1 + 1 for r in group})
         row_map = {v: i for i, v in enumerate(row_lines)}
@@ -129,7 +246,7 @@ def build_page_tables(
 
         cells: list[TableCell] = []
         for r in group:
-            text, score = assemble_text(items, r.x0, r.y0, r.x1, r.y1)
+            text, score = assemble_text(group_items, r.x0, r.y0, r.x1, r.y1)
             cells.append(
                 TableCell(
                     row=row_map[r.r0],

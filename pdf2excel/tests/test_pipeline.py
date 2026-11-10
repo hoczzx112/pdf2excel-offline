@@ -415,6 +415,75 @@ def test_text_drawn_as_outline_is_not_read_as_diameter() -> None:
     assert looks_like_diameter(o_rot)
 
 
+def test_scan_slashed_zero_recovered() -> None:
+    """Ảnh scan: ø bị OCR đọc thành "0" phải được nhận lại từ hình học.
+
+    4.pdf đọc ra `0129.5±0.05` / `8-03.9` / `钻03.9孔`; số 0 thật (dung sai
+    0.001) và chữ 8 (hai lỗ xếp dọc, có khe) thì phải giữ nguyên.
+    """
+    import cv2
+    import numpy as np
+
+    from app.core.models import TextItem
+    from app.core.ocr import _zero_candidates, resolve_slashed_zeros
+
+    img = np.full((64, 220, 3), 255, np.uint8)
+    # ø: vòng tròn + gạch chéo -> một lỗ bị cắt thành hai nửa sát nhau
+    cv2.ellipse(img, (30, 32), (13, 16), 0, 0, 360, (0, 0, 0), 2)
+    cv2.line(img, (17, 50), (43, 14), (0, 0, 0), 2)
+    # chữ "0" thật: một lỗ, không gạch
+    cv2.ellipse(img, (110, 32), (13, 16), 0, 0, 360, (0, 0, 0), 2)
+    # chữ "8": hai lỗ xếp dọc, giữa là eo (khe trắng)
+    cv2.ellipse(img, (190, 23), (11, 8), 0, 0, 360, (0, 0, 0), 2)
+    cv2.ellipse(img, (190, 43), (11, 8), 0, 0, 360, (0, 0, 0), 2)
+
+    zero = TextItem(x0=15, y0=12, x1=45, y1=54, text="0")
+    plain = TextItem(x0=95, y0=12, x1=125, y1=54, text="0")
+    eight = TextItem(x0=175, y0=12, x1=205, y1=54, text="8")
+    items = [zero, plain, eight]
+    resolve_slashed_zeros(img, items)
+
+    assert zero.text == "\u00f8", zero.text
+    assert plain.text == "0", plain.text
+    assert eight.text == "8", eight.text
+
+    # "0" đứng sau chữ số/khoảng thập phân là số thật, không phải ứng viên ø
+    assert _zero_candidates("80.2") == []
+    assert _zero_candidates("0.001") == [0]
+    # ... còn sau dấu ngăn cách / chữ Hán thì vẫn xét
+    assert _zero_candidates("8-03.9") == [2]
+    assert _zero_candidates("\u94bb03.9\u5b54") == [1]
+
+
+def test_ocr_line_spanning_two_cells_is_split() -> None:
+    """Dòng OCR gộp 2 ô phải cắt theo biên ô thật, không dồn hết vào ô trái.
+
+    4.pdf: `★直接测量（首件送检不要去毛刺做★首检/末检` bị đọc thành MỘT item
+    tràn qua đường kẻ, nên cả cụm nhảy vào ô 检测方法 còn ô 自检频次 trống.
+    """
+    from app.core.gridlines import CellRect
+    from app.core.models import TextItem
+    from app.core.tables import build_page_tables
+
+    rects = [
+        CellRect(0, 0, 0, 0, 0.0, 0.0, 100.0, 50.0),
+        CellRect(0, 1, 0, 1, 100.0, 0.0, 240.0, 50.0),
+        CellRect(1, 0, 1, 0, 0.0, 50.0, 100.0, 100.0),
+        CellRect(1, 1, 1, 1, 100.0, 50.0, 240.0, 100.0),
+    ]
+    items = [
+        # item tràn qua đường kẻ x = 100 -> phải cắt thành 2
+        TextItem(x0=10.0, y0=10.0, x1=185.0, y1=40.0, text="ABCDEFGH"),
+        # item nằm trong ô trái, hộp bao chỉ chờm qua đường kẻ -> không cắt
+        TextItem(x0=30.0, y0=60.0, x1=104.0, y1=90.0, text="XYZ"),
+    ]
+    tables = build_page_tables(rects, items, 1, "ocr", 100.0, 1.0)
+    assert len(tables) == 1
+    grid = tables[0].grid()
+    assert grid[0] == ["ABCD", "EFGH"], grid[0]
+    assert grid[1] == ["XYZ", ""], grid[1]
+
+
 def test_space_between_number_and_thread_class() -> None:
     """Giữ dấu cách thật của PDF: "6-M5×0.8 6H", không dính thành "0.86H".
 
