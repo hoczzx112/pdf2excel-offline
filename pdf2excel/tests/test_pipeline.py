@@ -538,6 +538,60 @@ def test_soft_join_removes_hard_line_breaks() -> None:
     assert _soft_join("") == ""
 
 
+def test_numbered_items_keep_line_breaks() -> None:
+    """Mục danh sách "1. 2. 3." giữ xuống dòng như bản PDF, phần còn lại vẫn nối."""
+    from app.export.xlsx import _cell_text
+
+    raw = (
+        "1. 手持扫码枪扫码：扫批次二维码，显示产品批\n"
+        "次和产品型号，并确认上线。\n"
+        "2.上线扫二维码，显示正确的产品型号和批次。"
+    )
+    assert _cell_text(raw) == (
+        "1. 手持扫码枪扫码：扫批次二维码，显示产品批次和产品型号，并确认上线。\n"
+        "2.上线扫二维码，显示正确的产品型号和批次。"
+    )
+
+    # số thập phân / ngày tháng / kích thước KHÔNG phải mục danh sách
+    assert _cell_text("20.09.2026\n0.02\n1.5mm") == "20.09.2026 0.02 1.5mm"
+    # kiểu liệt kê khác: "2)" và "①"
+    assert _cell_text("1)外观ok\n2)油膜均匀") == "1)外观ok\n2)油膜均匀"
+    assert _cell_text("①取料\n②送料") == "①取料\n②送料"
+
+
+def test_numbered_cell_written_with_wrap_and_height() -> None:
+    """Ô có mục danh sách được ghi kèm "\\n", bật wrap và đủ chiều cao cho 2 dòng."""
+    from openpyxl import load_workbook
+
+    from app.core.models import DocResult, PageResult, Table, TableCell
+
+    table = Table(
+        page=1, index=1, num_rows=2, num_cols=1,
+        cells=[
+            TableCell(row=0, col=0, text="步骤"),
+            TableCell(
+                row=1, col=0,
+                text="1.把工件放入料仓\n2.启动机床，等待加工完成。",
+            ),
+        ],
+    )
+    page = PageResult(
+        page=1, kind="text", used="pdfium", width_pt=595, height_pt=842,
+        tables=[table],
+    )
+    out = save_workbook(
+        DocResult(filename="list.pdf", pages=[page]),
+        _tmpdir() / "list.xlsx",
+    )
+    ws = load_workbook(out)["T1-B1"]
+    cell = ws["A2"]
+    assert cell.value == "1.把工件放入料仓\n2.启动机床，等待加工完成。", cell.value
+    assert cell.alignment.wrap_text is True
+    # 2 dòng cứng (2 × 12 pt + đệm 3 pt) — nếu chỉ tính 1 dòng thì sẽ bị cắt chữ
+    assert ws.row_dimensions[2].height >= 27.0, ws.row_dimensions[2].height
+
+
+
 def test_comma_stays_with_digits() -> None:
     """Dấu phẩy thấp hơn chữ số nhưng vẫn phải nằm cùng dòng: "1,2"."""
     from app.core.models import TextItem

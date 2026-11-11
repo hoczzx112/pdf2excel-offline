@@ -86,6 +86,46 @@ def _soft_join(text: str) -> str:
     return out
 
 
+# Dòng mở đầu bằng số thứ tự ("1." "2)" "(3)" "①") = một mục danh sách của
+# bản gốc. Giữ lại chỗ ngắt dòng trước mỗi mục: gộp hết thành một đoạn thì các
+# bước bị dính liền, rất khó đọc. Chỉ nhận số 1–2 chữ số và sau dấu chấm/ngoặc
+# phải là ký tự KHÔNG phải số, nên "0.02", "1.5mm", "20.09.2026" không bị hiểu
+# nhầm thành mục danh sách.
+_LIST_MARK = re.compile(
+    r"^(?:"
+    r"[0-9０-９]{1,2}\s*[.．、)）](?![0-9０-９])"
+    r"|[（(]\s*[0-9０-９]{1,2}\s*[)）]"
+    r"|[①-⑳]"
+    r")"
+)
+
+
+def _cell_text(text: str) -> str:
+    """Như `_soft_join` nhưng giữ xuống dòng trước mỗi mục danh sách.
+
+    Các dòng của MỘT mục vẫn được nối lại thành đoạn để Excel tự dàn theo độ
+    rộng cột; chỉ chỗ bắt đầu mục `1.` / `2.` / `3.` mới là xuống dòng cứng
+    (Alt+Enter) đúng như bản PDF.
+    """
+    blocks: list[list[str]] = [[]]
+    for part in (text or "").split("\n"):
+        part = part.strip()
+        if not part:
+            continue
+        if blocks[-1] and _LIST_MARK.match(part):
+            blocks.append([])
+        blocks[-1].append(part)
+    return "\n".join(_soft_join("\n".join(b)) for b in blocks if b)
+
+
+def _line_count(text: str, avail: float) -> int:
+    """Số dòng cần in: cộng dồn từng đoạn ngăn bởi xuống dòng cứng."""
+    return sum(
+        max(1, math.ceil(_display_width(seg) * _WIDTH_FACTOR / avail))
+        for seg in text.split("\n")
+    )
+
+
 def _set_text(cell, text: str) -> None:
     text = _clean(text)
     # Ô không có chữ phải là ô TRỐNG thật (bỏ hẳn giá trị). Nếu gán chuỗi rỗng,
@@ -157,7 +197,7 @@ def _write_table(ws: Worksheet, table: Table, overrides: dict[str, str]) -> None
     for (r, c), (rs, cs) in spans.items():
         cell = ws.cell(row=r + 1, column=c + 1)
         raw = grid[r][c] if r < len(grid) and c < len(grid[r]) else ""
-        _set_text(cell, _soft_join(str(raw)))
+        _set_text(cell, _cell_text(str(raw)))
         cell.font = _BODY_FONT
         cell.alignment = Alignment(
             wrap_text=True, vertical="center", horizontal="left"
@@ -223,11 +263,11 @@ def _write_table(ws: Worksheet, table: Table, overrides: dict[str, str]) -> None
             if rr != r:
                 continue
             val = grid[r][cc] if r < len(grid) and cc < len(grid[r]) else ""
-            text = _soft_join(str(val))
+            text = _cell_text(str(val))
             if text.strip():
                 has_text = True
             avail = max(2.0, sum(col_width[cc:cc + cs]) - 0.4)
-            lines = max(1, math.ceil(_display_width(text) * _WIDTH_FACTOR / avail))
+            lines = _line_count(text, avail)
             if scores.get((rr, cc)) is not None and (scores[(rr, cc)] or 1) < OCR_WARN_SCORE:
                 lines += 1
             need = max(need, lines / max(1, rs))

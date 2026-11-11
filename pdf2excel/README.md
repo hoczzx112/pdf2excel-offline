@@ -100,6 +100,14 @@ khi cần, ví dụ `R-TNCRB057` + `08406C.02` → `R-TNCRB057 08406C.02`), rồ
 Excel tự xuống dòng theo độ rộng cột. Chiều cao dòng được ước lượng sẵn để ô
 gộp (Excel không tự giãn ô gộp) vẫn hiện đủ chữ.
 
+**Ngoại lệ: mục danh sách.** Dòng mở đầu bằng số thứ tự (`1.` `2.` `3.`,
+`1)`, `(2)`, `①`) là một bước riêng trong bản gốc, nên app **giữ lại chỗ xuống
+dòng** trước mỗi mục — gộp hết lại thì các bước dính liền nhau rất khó đọc.
+Trong mỗi mục, chữ vẫn tự xuống dòng theo độ rộng cột như bình thường. Số thập
+phân / ngày tháng / kích thước (`0.02`, `1.5mm`, `20.09.2026`) không bị hiểu
+nhầm thành mục danh sách.
+
+
 Dấu cách **có thật** trong text layer của PDF được giữ nguyên, nên các cụm như
 `6-M5×0.8 6H` không còn bị dính thành `6-M5×0.86H` (khoảng hở giữa `0.8` và
 `6H` chỉ ~2,3 pt, nhỏ hơn nhiều so với một dấu cách bình thường).
@@ -202,6 +210,11 @@ Một số lỗi thường gặp trên bản scan / bản vẽ CAD và cách x�
   thật** (biên của một cặp ô kề nhau trong lưới, không phải mọi đường kẻ của
   bảng) đều được cắt lại theo vị trí ký tự, mỗi nửa vào đúng ô của nó; item chỉ
   chờm qua biên một chút (hộp bao OCR rộng hơn chữ) thì giữ nguyên.
+* **Các bước `1. 2. 3.` dính thành một đoạn** — app gộp mọi dòng trong ô để
+  Excel tự xuống dòng, nên `1. 手持扫码枪…。2.上线扫二维码…` chạy liền một
+  mạch. Nay dòng nào mở đầu bằng số thứ tự (`1.` `2)` `(3)` `①`) được giữ
+  nguyên chỗ xuống dòng, còn chữ bên trong mỗi bước vẫn tự dàn theo độ rộng
+  cột.
 
 Vì sao không dùng thư viện nhận dạng bảng phổ biến?
 
@@ -307,6 +320,7 @@ Python, không cần reportlab). Có thể chạy bằng `pytest tests/ -q`.
 | Ô hiện chữ cũ đã bị vẽ đè (vd. `共2页第7页`) | Đã sửa: bỏ lớp chữ nằm dưới, giữ lớp vẽ sau (lớp nhìn thấy trên giấy). |
 | Bản scan ra `0129.5±0.05` thay vì `ø129.5±0.05` | Đã sửa: app nhìn ảnh để phân biệt `ø` (hai nửa lỗ sát nhau) với `0`/`8`; `0.001`, `AC=0`, ngày tháng không bị đổi. |
 | Bản scan: chữ dài nhảy sang ô bên cạnh | Đã sửa: dòng OCR gộp hai ô được cắt lại theo biên ô thật, mỗi nửa vào đúng ô. |
+| Các bước `1. 2. 3.` trong một ô bị dính thành một đoạn | Đã sửa: dòng mở đầu bằng số thứ tự (`1.` `2)` `(3)` `①`) được giữ xuống dòng đúng như bản gốc; số thập phân/ngày tháng không bị ảnh hưởng. |
 | Trang bản vẽ AutoCAD làm app rất chậm | Bật **Bỏ qua trang 1** (mặc định đã bật) rồi **Chuyển đổi lại tất cả**. |
 
 ## 13. Cấu trúc mã nguồn
